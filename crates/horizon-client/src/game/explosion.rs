@@ -947,6 +947,7 @@ impl Game<'_> {
             } else {
                 (interaction == BlockInteraction::DestroyWithDecay).then_some(radius)
             };
+            let spawn = self.ui.rules.bool("block_drops");
             let mut drops = world_items!(self).block_drops_exploded(
                 self.pack.assets.registry,
                 state,
@@ -956,6 +957,7 @@ impl Game<'_> {
                 Some((&mut self.rand_sequences, self.level.seed)),
                 decay,
                 false,
+                spawn,
             );
             self.native_block_drops(pos, state, None, None, Some(radius), &mut drops);
             // BlockOre/BlockRedstoneOre.randomDropAsItem: 1.8 pays ore
@@ -974,13 +976,19 @@ impl Game<'_> {
                     xp,
                 );
             }
-            for mut stack in drops {
-                if &*stack.item == "minecraft:air" || stack.count == 0 {
+            for mut drop in drops {
+                if &*drop.item == "minecraft:air" || drop.stack.count == 0 {
                     continue;
                 }
-                self.pending.attach(pos, &mut stack);
+                if horizon_core::target::is_1_8_9() {
+                    // 1.8 spawns each stack inside `dropBlockAsItemWithChance`,
+                    // so its position draws must not wait for the other blocks.
+                    self.pop_popped(pos, drop);
+                    continue;
+                }
+                self.pending.attach(pos, &mut drop.stack);
                 let items = self.res.items();
-                add_or_append_stack(stacks, stack, pos, &|s| {
+                add_or_append_stack(stacks, drop.stack, pos, &|s| {
                     items.get(&s.item).map_or(64, |i| i.max_stack)
                 });
             }

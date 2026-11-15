@@ -2319,16 +2319,21 @@ impl Game<'_> {
                         self.destroy_particles(pos, old);
                     }
                     if drop {
-                        let mut drops = world_items!(self).block_drops_in(
+                        let spawn = self.ui.rules.bool("block_drops");
+                        let mut drops = world_items!(self).block_drops_exploded(
                             self.pack.assets.registry,
                             old,
                             None,
+                            &[],
                             &mut self.world.random,
                             Some((&mut self.rand_sequences, self.level.seed)),
+                            None,
+                            false,
+                            spawn,
                         );
                         self.native_block_drops(pos, old, None, None, None, &mut drops);
                         for d in drops {
-                            self.pop_resource(pos, d);
+                            self.pop_popped(pos, d);
                         }
                     }
                     // Level.destroyBlock: setBlock(fluidState.createLegacyBlock(), 3),

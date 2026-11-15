@@ -484,8 +484,10 @@ pub fn carried_block_drops(
             sequences,
             None,
             true,
+            false,
         )
         .into_iter()
+        .map(|d| d.stack)
         .filter(|s| s.count > 0 && &*s.item != "minecraft:air")
         .collect()
 }

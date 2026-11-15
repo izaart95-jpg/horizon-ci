@@ -1124,18 +1124,9 @@ impl Items {
         sequences: Option<(&mut crate::random_sequences::RandomSequences, i64)>,
     ) -> Vec<ItemStack> {
         self.block_drops_full(registry, state, held, &[], random, sequences)
-    }
-    /// `block_drops` with the block entity's dynamic drops (`LootParams.withDynamicDrop`:
-    /// a decorated pot's sherds) in place of the `minecraft:dynamic` entries.
-    pub fn block_drops_with(
-        &self,
-        registry: &BlockRegistry,
-        state: BlockStateId,
-        held: Option<&ItemStack>,
-        dynamic: &[ItemStack],
-        random: &mut impl RandomSource,
-    ) -> Vec<ItemStack> {
-        self.block_drops_full(registry, state, held, dynamic, random, None)
+            .into_iter()
+            .map(|d| d.stack)
+            .collect()
     }
     /// `block_drops_in` with dynamic drops.
     pub fn block_drops_full(
@@ -1146,15 +1137,15 @@ impl Items {
         dynamic: &[ItemStack],
         random: &mut impl RandomSource,
         sequences: Option<(&mut crate::random_sequences::RandomSequences, i64)>,
-    ) -> Vec<ItemStack> {
+    ) -> Vec<crate::block_drops_1_8_9::Popped> {
         self.block_drops_exploded(
-            registry, state, held, dynamic, random, sequences, None, false,
+            registry, state, held, dynamic, random, sequences, None, false, false,
         )
     }
-    /// `block_drops_with` for a block a player breaks (`Block.playerDestroy`):
-    /// the player is the loot context's `this` entity, so snow and chorus
-    /// flower tables see an entity.
-    pub fn block_drops_by_player(
+    /// `block_drops_with` for a block entity's own drops (the 26.3 ledger):
+    /// callers spawn them with `Block.popResource`, so the 1.8 position
+    /// draws happen at spawn time instead.
+    pub fn block_drops_with(
         &self,
         registry: &BlockRegistry,
         state: BlockStateId,
@@ -1162,7 +1153,28 @@ impl Items {
         dynamic: &[ItemStack],
         random: &mut impl RandomSource,
     ) -> Vec<ItemStack> {
-        self.block_drops_exploded(registry, state, held, dynamic, random, None, None, true)
+        self.block_drops_full(registry, state, held, dynamic, random, None)
+            .into_iter()
+            .map(|d| d.stack)
+            .collect()
+    }
+    /// `block_drops_with` for a block a player breaks (`Block.playerDestroy`):
+    /// the player is the loot context's `this` entity, so snow and chorus
+    /// flower tables see an entity. `spawn` is `doTileDrops`: each 1.8 stack's
+    /// `Block.spawnAsEntity` position draws happen as it is rolled when the
+    /// drops are on.
+    pub fn block_drops_by_player(
+        &self,
+        registry: &BlockRegistry,
+        state: BlockStateId,
+        held: Option<&ItemStack>,
+        dynamic: &[ItemStack],
+        random: &mut impl RandomSource,
+        spawn: bool,
+    ) -> Vec<crate::block_drops_1_8_9::Popped> {
+        self.block_drops_exploded(
+            registry, state, held, dynamic, random, None, None, true, spawn,
+        )
     }
     /// `block_drops_full` for a block an explosion destroys: `explosion`
     /// is its radius when the explosion decays drops (`DESTROY_WITH_DECAY`);
@@ -1178,9 +1190,11 @@ impl Items {
         sequences: Option<(&mut crate::random_sequences::RandomSequences, i64)>,
         explosion: Option<f32>,
         breaker: bool,
-    ) -> Vec<ItemStack> {
-        let drops =
-            self.block_drops_raw(registry, state, held, random, sequences, explosion, breaker);
+        spawn: bool,
+    ) -> Vec<crate::block_drops_1_8_9::Popped> {
+        let drops = self.block_drops_raw(
+            registry, state, held, random, sequences, explosion, breaker, spawn,
+        );
         if !drops.iter().any(|d| d.item.starts_with(DYNAMIC)) {
             return drops;
         }
@@ -1188,7 +1202,13 @@ impl Items {
             .into_iter()
             .flat_map(|d| {
                 if d.item.starts_with(DYNAMIC) {
-                    dynamic.to_vec()
+                    dynamic
+                        .iter()
+                        .map(|stack| crate::block_drops_1_8_9::Popped {
+                            stack: stack.clone(),
+                            pop: None,
+                        })
+                        .collect()
                 } else {
                     vec![d]
                 }
@@ -1205,7 +1225,8 @@ impl Items {
         sequences: Option<(&mut crate::random_sequences::RandomSequences, i64)>,
         explosion_radius: Option<f32>,
         breaker: bool,
-    ) -> Vec<ItemStack> {
+        spawn: bool,
+    ) -> Vec<crate::block_drops_1_8_9::Popped> {
         let Some(block) = registry.state(state) else {
             return vec![];
         };
@@ -1226,13 +1247,16 @@ impl Items {
                 ),
             };
             return drops.drops(
-                registry, state, legacy, held, random, chance, fortune, breaker,
+                registry, state, legacy, held, random, chance, fortune, breaker, spawn,
             );
         }
         let table = self.block_loot_table(registry, state);
         let Some(table) = table.and_then(|id| self.loot.get(&id)) else {
             return vec![];
         };
+        // A 26.3 loot table's stacks are spawned by the caller's
+        // `Block.popResource`, so they carry no 1.8 position draws.
+        let no_pop = |stack: ItemStack| crate::block_drops_1_8_9::Popped { stack, pop: None };
         // LootTable.getRandomItems draws from the table's random sequence.
         if let (Some(seq), Some(sequences)) = (
             table.get("random_sequence").and_then(Value::as_str),
@@ -1248,7 +1272,11 @@ impl Items {
                 explosion_radius,
                 this_entity: breaker,
             };
-            return ctx.evaluate(table, random);
+            return ctx
+                .evaluate(table, random)
+                .into_iter()
+                .map(no_pop)
+                .collect();
         }
         let ctx = LootContext {
             items: self,
@@ -1260,6 +1288,9 @@ impl Items {
             this_entity: breaker,
         };
         ctx.evaluate(table, random)
+            .into_iter()
+            .map(no_pop)
+            .collect()
     }
     /// Evaluate an entity's loot table (`minecraft:entities/<name>`).
     /// Evaluate any loot table by id (e.g. `minecraft:gameplay/chicken_lay`).

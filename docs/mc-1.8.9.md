@@ -45,10 +45,15 @@
 > - **Block drops are 1.8's, but a few non-player paths still differ.** Every
 >   state's drop now comes from a generated 1.8 table (1,382 `(id, metadata)`
 >   rows) with 1.8's draw order, fortune, silk-touch, shears and block
->   overrides instead of the 26.3 loot tables. An explosion pays ore
->   experience from 1.8's `randomDropAsItem` even when the chance fails.
->   Debt: pop offsets are drawn after all drops instead of inside each
->   drop, and piston-extension drops have no path until pistons are ported.
+>   overrides instead of the 26.3 loot tables. Each stack's
+>   `Block.spawnAsEntity` position is drawn where 1.8 draws it, immediately
+>   after that stack's chance and item draws (`nextFloat() * 0.5 + 0.25` per
+>   axis, 0.25..0.75 above the block), so a multi-drop block and an explosion
+>   read the same stream vanilla does. An explosion pays ore experience from
+>   1.8's `randomDropAsItem` even when the chance fails. Debt: commands and
+>   block-entity paths that roll through `block_drops_in` still draw the
+>   position at spawn instead of inside the roll, and piston-extension drops
+>   have no path yet.
 >   A jukebox's record is not in its drop table: it pops through the block's
 >   pre-removal side effect with 1.8's own offset.
 > - **Chest loot is 1.8's lists and 1.8's fill.** The eleven chests 1.8 fills
@@ -646,11 +651,14 @@ the drop call: `explosion_experience` pays coal (0..2), diamond and emerald
 including when every explosion chance failed, at the block centre and only
 under `doTileDrops`. 1.8's `EntityXPOrb` also has no merge pass and builds
 without a level-random draw, so the 26.3 merge id and spawn merge are skipped
-under 1.8. Debt: 1.8 draws each dropped stack's pop offset inside its own
-`onBlockBreak`, while the engine draws all offsets after all drops, so an
-explosion can choose different stacks; `PistonExtensionBlock.randomDropAsItem`
-(the pushed block through its moving block entity) is unreachable until pistons
-are ported. A jukebox's record is not part of its block drop: the
+under 1.8. Each stack's `Block.spawnAsEntity` position is drawn inside its own
+drop call (`nextFloat() * 0.5 + 0.25` per axis), so a multi-drop block and an
+explosion read the same stream as vanilla, and `doTileDrops` is checked before
+those draws. Debt: block-entity paths that still roll through
+`block_drops_with`/`block_drops_in` draw the position at spawn instead, and
+`PistonExtensionBlock.randomDropAsItem` (the pushed block through its moving
+block entity) has no drop path yet. A jukebox's record is not part of its block
+drop: the
 `PreRemove::Jukebox` side effect pops it the way 1.8's
 `BlockJukebox.dropRecord` does, with `(1 - 0.7) * 0.5` added to x and z and
 `(1 - 0.7) * 0.2 + 0.6` to y after each coordinate's `nextFloat() * 0.7`, and

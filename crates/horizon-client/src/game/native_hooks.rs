@@ -3598,7 +3598,7 @@ impl Game<'_> {
         player: Option<u128>,
         tool: Option<&ItemStack>,
         explosion: Option<f32>,
-        drops: &mut Vec<ItemStack>,
+        drops: &mut Vec<horizon_client::block_drops_1_8_9::Popped>,
     ) {
         let items = match &self.world_tables {
             Some(tables) => &tables.items,
@@ -3616,8 +3616,22 @@ impl Game<'_> {
             explosion,
             used: false,
         };
-        self.native_loot_drops(&context, drops);
-        drops.retain(|stack| stack.count > 0 && &*stack.item != "minecraft:air");
+        // The mods see and change plain stacks; a 1.8 stack keeps the position
+        // draws it made when it was rolled. A changed list (a mod added or
+        // removed drops) falls back to drawing positions at spawn time.
+        let mut stacks: Vec<ItemStack> = drops.iter().map(|d| d.stack.clone()).collect();
+        self.native_loot_drops(&context, &mut stacks);
+        if stacks.len() == drops.len() {
+            for (drop, stack) in drops.iter_mut().zip(stacks) {
+                drop.stack = stack;
+            }
+        } else {
+            *drops = stacks
+                .into_iter()
+                .map(|stack| horizon_client::block_drops_1_8_9::Popped { stack, pop: None })
+                .collect();
+        }
+        drops.retain(|drop| drop.stack.count > 0 && &*drop.stack.item != "minecraft:air");
     }
     /// The mods' say on what the acting player's use drops
     /// (`NativeLootDrops::used`): `table` is the loot table rolled, if any.

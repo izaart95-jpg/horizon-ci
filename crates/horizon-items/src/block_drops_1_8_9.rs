@@ -12,7 +12,9 @@
 //! fortune rules draw in a different order than 26.3's loot tables, and
 //! several blocks (`LeavesBlock`, `CropBlock`, `StemBlock`, ...) have their own
 //! `randomDropAsItem`. This module reproduces those draws exactly, including
-//! the draws made before a failed explosion chance check.
+//! the draws made before a failed explosion chance check and the three
+//! `Block.spawnAsEntity` position draws each spawned stack makes, which
+//! interleave with the next stack's chance draw.
 use crate::{Result, items::ItemStack, legacy_1_8_9};
 use horizon_core::random::RandomSource;
 use horizon_world::{
@@ -161,10 +163,62 @@ fn stack(id: i16, count: i32, damage: i16) -> Option<ItemStack> {
     legacy_1_8_9::stack(id, count as i8, damage, &Tag::End)
 }
 
-fn push(out: &mut Vec<ItemStack>, id: i16, damage: i16) {
-    if let Some(stack) = stack(id, 1, damage) {
-        out.push(stack);
+/// A stack 1.8's `Block.spawnAsEntity` is about to spawn, with the three
+/// position draws that call makes from the level's random the moment the
+/// stack is created: `nextFloat() * 0.5 + 0.25` for x, then y, then z. They
+/// are carried out because they interleave with the next stack's chance and
+/// item draws; spawning in a later pass would read a different stream.
+#[derive(Clone, Debug)]
+pub struct Popped {
+    pub stack: ItemStack,
+    /// `None` when the stack is not a 1.8 `spawnAsEntity` drop (a 26.3 loot
+    /// table, a block entity's dynamic contents), so the caller draws the
+    /// position itself.
+    pub pop: Option<[f32; 3]>,
+}
+
+impl std::ops::Deref for Popped {
+    type Target = ItemStack;
+    fn deref(&self) -> &ItemStack {
+        &self.stack
     }
+}
+
+/// `Block.spawnAsEntity`: the three draws are skipped when the block's drops
+/// are switched off (`doTileDrops`), because 1.8 checks the gamerule before
+/// drawing them.
+fn popped(stack: ItemStack, random: &mut impl RandomSource, spawn: bool) -> Popped {
+    if !spawn {
+        return Popped { stack, pop: None };
+    }
+    let x = random.next_float() * 0.5 + 0.25;
+    let y = random.next_float() * 0.5 + 0.25;
+    let z = random.next_float() * 0.5 + 0.25;
+    Popped {
+        stack,
+        pop: Some([x, y, z]),
+    }
+}
+
+fn push(out: &mut Vec<Popped>, id: i16, damage: i16, random: &mut impl RandomSource, spawn: bool) {
+    if let Some(stack) = stack(id, 1, damage) {
+        out.push(popped(stack, random, spawn));
+    }
+}
+
+/// A `harvest` override that builds its stacks without drawing, then hands
+/// each to `Block.spawnAsEntity`.
+fn spawn_all(stacks: Vec<ItemStack>, random: &mut impl RandomSource, spawn: bool) -> Vec<Popped> {
+    stacks
+        .into_iter()
+        .map(|stack| popped(stack, random, spawn))
+        .collect()
+}
+
+/// `Block.spawnAsEntity` for a stack a `harvest` override built outside the
+/// drop table: the three position draws, in vanilla's x/y/z order.
+pub fn spawn_as_entity(stack: ItemStack, random: &mut impl RandomSource, spawn: bool) -> Popped {
+    popped(stack, random, spawn)
 }
 
 impl BlockDrops {
@@ -228,7 +282,8 @@ impl BlockDrops {
     /// decays drops; `fortune` is zero for an explosion, as in
     /// `Explosion` (`Block.dropAsItem(..., fortune 0)`). `breaker` is whether
     /// a player broke the block: only then do `harvest`'s shears and silk
-    /// branches run.
+    /// branches run. `spawn` is `doTileDrops`: 1.8 draws each stack's
+    /// `spawnAsEntity` position only when the drops are actually spawned.
     #[allow(clippy::too_many_arguments)]
     pub fn drops(
         &self,
@@ -240,7 +295,8 @@ impl BlockDrops {
         chance: f32,
         fortune: u32,
         breaker: bool,
-    ) -> Vec<ItemStack> {
+        spawn: bool,
+    ) -> Vec<Popped> {
         let Some(block) = registry.state(state) else {
             return Vec::new();
         };
@@ -260,19 +316,19 @@ impl BlockDrops {
                     if let Some(stack) = stack(332, layers + 1, 0) {
                         out.push(stack);
                     }
-                    return out;
+                    return spawn_all(out, random, spawn);
                 }
                 // The shears branches: leaves keep their species, tall grass
                 // and dead bushes drop themselves, vines drop a vine.
                 18 | 161 | 31 | 32 | 106 if shears => {
-                    return shears_drop(id, meta);
+                    return spawn_all(shears_drop(id, meta), random, spawn);
                 }
                 // DoublePlantBlock.harvest: shears on the lower half of a
                 // grass or fern drop two tall-grass items; flowers fall
                 // through to the generic path.
                 175 if shears => {
                     if let Some(out) = double_plant_shears(block) {
-                        return out;
+                        return spawn_all(out, random, spawn);
                     }
                 }
                 _ => {}
@@ -283,11 +339,12 @@ impl BlockDrops {
             return Vec::new();
         };
         if breaker && row.silk_required && silk {
-            return row
+            let stack = row
                 .silk
                 .and_then(|(id, meta)| stack(id, 1, i16::from(meta)))
                 .into_iter()
                 .collect();
+            return spawn_all(stack, random, spawn);
         }
 
         let mut out = Vec::new();
@@ -299,13 +356,13 @@ impl BlockDrops {
             // super call gets fortune 0 because the head half is skipped.
             26 => {
                 if meta & 0x08 == 0 {
-                    generic(&mut out, *row, random, chance, 0);
+                    generic(&mut out, *row, random, chance, 0, spawn);
                 }
             }
             // JukeboxBlock.randomDropAsItem: the record belongs to the block
             // entity and stays out of the drops; the block's own drop gets
             // fortune 0.
-            84 => generic(&mut out, *row, random, chance, 0),
+            84 => generic(&mut out, *row, random, chance, 0, spawn),
             // PistonExtensionBlock.randomDropAsItem drops the pushed block
             // through its moving-piston block entity. This engine has no
             // pistons yet (docs/mc-1.8.9.md), so the block entity is absent
@@ -313,8 +370,8 @@ impl BlockDrops {
             36 => {}
             // BannerBlock.randomDropAsItem/harvest: a banner with a block
             // entity drops itself with the entity's base colour and patterns
-            // and draws nothing; `Pending::attach` fills those in.
-            176 | 177 => push(&mut out, 425, 0),
+            // through `spawnAsEntity`; `Pending::attach` fills those in.
+            176 | 177 => push(&mut out, 425, 0, random, spawn),
             // GravelBlock.getDropItem: `nextInt(10 - fortune * 3) == 0`
             // gives flint, otherwise gravel.
             13 => {
@@ -326,12 +383,12 @@ impl BlockDrops {
                     } else {
                         13
                     };
-                    push(&mut out, id, 0);
+                    push(&mut out, id, 0, random, spawn);
                 }
             }
             // LeavesBlock.randomDropAsItem: a sapling chance, then an apple
             // chance for oak and dark oak. Explosion chance is ignored.
-            18 | 161 => leaves(&mut out, id, meta, fortune, random),
+            18 | 161 => leaves(&mut out, id, meta, fortune, random, spawn),
             // TallPlantBlock: `getBonusDrops` is `1 + nextInt(fortune * 2 + 1)`
             // and `getDropItem` is `nextInt(8) == 0 ? wheat seeds : null`.
             31 => {
@@ -341,18 +398,18 @@ impl BlockDrops {
                         continue;
                     }
                     if random.next_int_bound(8).unwrap_or(1) == 0 {
-                        push(&mut out, 295, 0);
+                        push(&mut out, 295, 0, random, spawn);
                     }
                 }
             }
-            59 | 141 | 142 => crop(&mut out, id, block, random, chance, fortune),
+            59 | 141 | 142 => crop(&mut out, id, block, random, chance, fortune, spawn),
             // StemBlock.randomDropAsItem: the generic attempt drops nothing,
             // then three `nextInt(15) <= age` seed attempts.
-            104 | 105 => stem(&mut out, id, block, random),
+            104 | 105 => stem(&mut out, id, block, random, spawn),
             // NetherWartBlock.randomDropAsItem ignores the chance.
-            115 => nether_wart(&mut out, block, fortune, random),
+            115 => nether_wart(&mut out, block, fortune, random, spawn),
             // CocoaBlock.randomDropAsItem ignores the chance and fortune.
-            127 => cocoa(&mut out, block),
+            127 => cocoa(&mut out, block, random, spawn),
             // DoublePlantBlock.getDropItem draws the 1/8 wheat seed for the
             // lower tall grass; the other variants return their item or null
             // without a draw.
@@ -365,11 +422,11 @@ impl BlockDrops {
                         continue;
                     }
                     if random.next_int_bound(8).unwrap_or(1) == 0 {
-                        push(&mut out, 295, 0);
+                        push(&mut out, 295, 0, random, spawn);
                     }
                 }
             }
-            _ => generic(&mut out, *row, random, chance, fortune),
+            _ => generic(&mut out, *row, random, chance, fortune, spawn),
         }
         out
     }
@@ -386,9 +443,7 @@ fn shears_drop(id: u16, meta: u8) -> Vec<ItemStack> {
         106 => (106, 0),
         _ => return Vec::new(),
     };
-    let mut out = Vec::new();
-    push(&mut out, item, damage);
-    out
+    stack(item, 1, damage).into_iter().collect()
 }
 
 /// `DoublePlantBlock.harvest` + `method_8753`: two tall-grass items for the
@@ -412,11 +467,12 @@ pub fn double_plant_shears(block: &BlockState) -> Option<Vec<ItemStack>> {
 /// `LeavesBlock.randomDropAsItem` and the `Leaves1Block`/`Leaves2Block`
 /// apple overrides.
 fn leaves(
-    out: &mut Vec<ItemStack>,
+    out: &mut Vec<Popped>,
     id: u16,
     meta: u8,
     fortune: u32,
     random: &mut impl RandomSource,
+    spawn: bool,
 ) {
     let variant = i16::from(meta & 3);
     let jungle = id == 18 && variant == 3;
@@ -428,7 +484,7 @@ fn leaves(
     if random.next_int_bound(chance).unwrap_or(1) == 0 {
         // `getMeta` keeps the wood type; leaves2's saplings are damage 4/5.
         let damage = variant + if id == 161 { 4 } else { 0 };
-        push(out, 6, damage);
+        push(out, 6, damage, random, spawn);
     }
     let mut apple_chance = 200;
     if fortune > 0 {
@@ -437,18 +493,19 @@ fn leaves(
     }
     let drops_apple = (id == 18 && variant == 0) || (id == 161 && variant == 1);
     if drops_apple && random.next_int_bound(apple_chance).unwrap_or(1) == 0 {
-        push(out, 260, 0);
+        push(out, 260, 0, random, spawn);
     }
 }
 
 /// `CropBlock.randomDropAsItem` (+ `PotatoesBlock`'s poisonous potato).
 fn crop(
-    out: &mut Vec<ItemStack>,
+    out: &mut Vec<Popped>,
     id: u16,
     block: &BlockState,
     random: &mut impl RandomSource,
     chance: f32,
     fortune: u32,
+    spawn: bool,
 ) {
     let age = property_i32(block, "age").unwrap_or(0);
     let (produce, seed) = match id {
@@ -458,22 +515,28 @@ fn crop(
     };
     // The `super.randomDropAsItem` call: fortune is forced to 0 there.
     if random.next_float() <= chance {
-        push(out, if age >= 7 { produce } else { seed }, 0);
+        push(out, if age >= 7 { produce } else { seed }, 0, random, spawn);
     }
     if age >= 7 {
         for _ in 0..(3 + fortune) {
             if random.next_int_bound(15).unwrap_or(15) <= age {
-                push(out, seed, 0);
+                push(out, seed, 0, random, spawn);
             }
         }
         if id == 142 && random.next_int_bound(50).unwrap_or(1) == 0 {
-            push(out, 394, 0);
+            push(out, 394, 0, random, spawn);
         }
     }
 }
 
 /// `StemBlock.randomDropAsItem`: no generic drop, three seed chances.
-fn stem(out: &mut Vec<ItemStack>, id: u16, block: &BlockState, random: &mut impl RandomSource) {
+fn stem(
+    out: &mut Vec<Popped>,
+    id: u16,
+    block: &BlockState,
+    random: &mut impl RandomSource,
+    spawn: bool,
+) {
     let age = property_i32(block, "age").unwrap_or(0);
     // The super call draws the chance before `getDropItem` returns null;
     // whether the draw passes does not change the (absent) drop.
@@ -481,17 +544,18 @@ fn stem(out: &mut Vec<ItemStack>, id: u16, block: &BlockState, random: &mut impl
     let seed = if id == 104 { 361 } else { 362 };
     for _ in 0..3 {
         if random.next_int_bound(15).unwrap_or(15) <= age {
-            push(out, seed, 0);
+            push(out, seed, 0, random, spawn);
         }
     }
 }
 
 /// `NetherWartBlock.randomDropAsItem`, which ignores the explosion chance.
 fn nether_wart(
-    out: &mut Vec<ItemStack>,
+    out: &mut Vec<Popped>,
     block: &BlockState,
     fortune: u32,
     random: &mut impl RandomSource,
+    spawn: bool,
 ) {
     let age = property_i32(block, "age").unwrap_or(0);
     let mut count = 1;
@@ -502,28 +566,29 @@ fn nether_wart(
         }
     }
     for _ in 0..count {
-        push(out, 372, 0);
+        push(out, 372, 0, random, spawn);
     }
 }
 
 /// `CocoaBlock.randomDropAsItem`: 1 brown dye, or 3 when ripe. It ignores the
 /// explosion chance.
-fn cocoa(out: &mut Vec<ItemStack>, block: &BlockState) {
+fn cocoa(out: &mut Vec<Popped>, block: &BlockState, random: &mut impl RandomSource, spawn: bool) {
     let age = property_i32(block, "age").unwrap_or(0);
     let count = if age >= 2 { 3 } else { 1 };
     for _ in 0..count {
         // Brown dye (`Items.DYE`, damage 3 = cocoa beans after flattening).
-        push(out, 351, 3);
+        push(out, 351, 3, random, spawn);
     }
 }
 
 /// `Block.randomDropAsItem` with no item/count override.
 fn generic(
-    out: &mut Vec<ItemStack>,
+    out: &mut Vec<Popped>,
     row: Row,
     random: &mut impl RandomSource,
     chance: f32,
     fortune: u32,
+    spawn: bool,
 ) {
     let count = row.bonus.count(row.count, fortune, random);
     for _ in 0..count {
@@ -533,7 +598,7 @@ fn generic(
             continue;
         }
         if let Some(id) = row.drop {
-            push(out, id, i16::from(row.meta));
+            push(out, id, i16::from(row.meta), random, spawn);
         }
     }
 }
@@ -635,6 +700,7 @@ mod tests {
             1.0,
             0,
             true,
+            true,
         );
         assert_eq!(plain.len(), 1);
         assert_eq!(&*plain[0].item, "minecraft:cobblestone");
@@ -648,6 +714,7 @@ mod tests {
             &mut random,
             1.0,
             0,
+            true,
             true,
         );
         assert_eq!(silk.len(), 1);
@@ -668,12 +735,82 @@ mod tests {
             1.0,
             0,
             true,
+            true,
         );
         assert_eq!(out.len(), 3);
         assert!(
             out.iter()
                 .all(|s| &*s.item == "minecraft:book" && s.count == 1)
         );
+    }
+
+    /// `Block.spawnAsEntity` draws a spawned stack's three position floats
+    /// right after that stack's chance and item draws, so a multi-drop
+    /// block's offsets interleave with the next stack's chance draw.
+    #[test]
+    fn pop_offsets_interleave_with_the_next_chance_draw() {
+        let drops = table(&[(47, 0, row(Some(340), 0, 3, Bonus::One))]);
+        let registry = registry(&[("minecraft:bookshelf", &[])]);
+        let mut random = LegacyRandom::new(7);
+        let out = drops.drops(
+            &registry,
+            BlockStateId(0),
+            (47, 0),
+            None,
+            &mut random,
+            1.0,
+            0,
+            true,
+            true,
+        );
+        assert_eq!(out.len(), 3);
+        // Java Random(7): 0.730699003 passes the chance; the offsets are the
+        // next three floats scaled into 0.25..0.75.
+        let mut expected = LegacyRandom::new(7);
+        let _ = expected.next_float();
+        let want = [
+            expected.next_float() * 0.5 + 0.25,
+            expected.next_float() * 0.5 + 0.25,
+            expected.next_float() * 0.5 + 0.25,
+        ];
+        assert_eq!(out[0].pop, Some(want));
+        assert!(out.iter().all(|d| d.pop.is_some()));
+        // Three stacks, each one chance draw and three position draws.
+        let mut after = LegacyRandom::new(7);
+        for _ in 0..3 {
+            after.next_float();
+            for _ in 0..3 {
+                after.next_float();
+            }
+        }
+        assert_eq!(random.next_int(), after.next_int());
+    }
+
+    /// With `doTileDrops` off, `Block.spawnAsEntity` returns before its
+    /// position draws, so only the chance floats are consumed.
+    #[test]
+    fn no_pop_offsets_when_drops_are_off() {
+        let drops = table(&[(47, 0, row(Some(340), 0, 3, Bonus::One))]);
+        let registry = registry(&[("minecraft:bookshelf", &[])]);
+        let mut random = LegacyRandom::new(7);
+        let out = drops.drops(
+            &registry,
+            BlockStateId(0),
+            (47, 0),
+            None,
+            &mut random,
+            1.0,
+            0,
+            true,
+            false,
+        );
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|d| d.pop.is_none()));
+        let mut after = LegacyRandom::new(7);
+        for _ in 0..3 {
+            after.next_float();
+        }
+        assert_eq!(random.next_int(), after.next_int());
     }
 
     #[test]
@@ -691,6 +828,7 @@ mod tests {
             0.0,
             0,
             false,
+            true,
         );
         assert!(skipped.is_empty());
     }
@@ -708,6 +846,7 @@ mod tests {
             &mut random,
             1.0,
             0,
+            true,
             true,
         );
         assert_eq!(out.len(), 5);
@@ -727,6 +866,7 @@ mod tests {
             &mut random,
             1.0,
             3,
+            true,
             true,
         );
         assert!(!out.is_empty());
@@ -750,6 +890,7 @@ mod tests {
             &mut random,
             1.0,
             0,
+            true,
             true,
         );
         assert_eq!(out.len(), 1);
@@ -776,6 +917,7 @@ mod tests {
             1.0,
             0,
             true,
+            true,
         );
         assert_eq!(out.len(), 1);
         assert_eq!(&*out[0].item, "minecraft:flint");
@@ -798,6 +940,7 @@ mod tests {
             1.0,
             3,
             true,
+            true,
         );
         // BedBlock.randomDropAsItem returns before `super` for the head half,
         // so not even the chance is drawn.
@@ -812,6 +955,7 @@ mod tests {
             &mut random,
             1.0,
             3,
+            true,
             true,
         );
         assert_eq!(foot.len(), 1);
@@ -835,6 +979,7 @@ mod tests {
             1.0,
             0,
             true,
+            true,
         );
         assert_eq!(seed.len(), 1);
         assert_eq!(&*seed[0].item, "minecraft:wheat_seeds");
@@ -847,6 +992,7 @@ mod tests {
             &mut random,
             1.0,
             0,
+            true,
             true,
         );
         assert!(none.is_empty());
@@ -868,10 +1014,16 @@ mod tests {
             0.0,
             0,
             false,
+            true,
         );
         assert_eq!(out.len(), 1);
         assert!(out[0].item.ends_with("_banner"));
+        // The banner itself draws nothing, but `spawnAsEntity` still takes its
+        // three position floats.
         let mut untouched = LegacyRandom::new(5);
+        for _ in 0..3 {
+            untouched.next_float();
+        }
         assert_eq!(random.next_int(), untouched.next_int());
     }
 
@@ -888,6 +1040,7 @@ mod tests {
             &mut random,
             0.0,
             0,
+            true,
             true,
         );
         assert_eq!(out.len(), 3);

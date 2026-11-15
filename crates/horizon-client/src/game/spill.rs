@@ -287,6 +287,17 @@ pub(super) fn pop_position(
     random: &mut impl horizon_core::random::RandomSource,
     pos: [i32; 3],
 ) -> [f64; 3] {
+    // 1.8's `Block.spawnAsEntity` draws three floats into 0.25..0.75 and uses
+    // them as the entity's position: no half-height, and the item sits
+    // 0.25..0.75 above the block rather than 0.125..0.625.
+    if horizon_core::target::is_1_8_9() {
+        let mut offset = || f64::from(random.next_float() * 0.5 + 0.25);
+        return [
+            f64::from(pos[0]) + offset(),
+            f64::from(pos[1]) + offset(),
+            f64::from(pos[2]) + offset(),
+        ];
+    }
     let mut offset = || -0.25 + random.next_double() * 0.5;
     // EntityTypes.ITEM is 0.25 high.
     let half_height = f64::from(0.25f32) / 2.0;
