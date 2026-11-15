@@ -156,8 +156,10 @@ fn modifier_1_8_9(tag: &Tag) -> Option<(String, String, f64, String, String)> {
     ))
 }
 
-/// The engine's attribute id for a stored one: 1.8 names it `generic.attackDamage`,
-/// the datafix `minecraft:generic.attack_damage`, the engine `attack_damage`.
+/// The engine's attribute id for a stored one: 1.8 names it
+/// `generic.attackDamage`, the datafix `minecraft:generic.attack_damage`, the
+/// engine `minecraft:attack_damage`. A name that is already snake_case passes
+/// through unchanged.
 fn attribute_1_8_9(name: &str) -> String {
     let short = name.strip_prefix("minecraft:").unwrap_or(name);
     let short = short
@@ -165,7 +167,18 @@ fn attribute_1_8_9(name: &str) -> String {
         .or_else(|| short.strip_prefix("horse."))
         .or_else(|| short.strip_prefix("zombie."))
         .unwrap_or(short);
-    format!("minecraft:{short}")
+    let mut engine = String::from("minecraft:");
+    for (i, c) in short.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                engine.push('_');
+            }
+            engine.push(c.to_ascii_lowercase());
+        } else {
+            engine.push(c);
+        }
+    }
+    engine
 }
 
 /// `attribute.name.<n>`'s 1.8 key: the jar's language file only has the seven
