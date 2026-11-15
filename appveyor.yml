@@ -18,8 +18,8 @@ install:
   - sudo apt-get install -y -qq libasound2-dev libudev-dev pkg-config
 
 build_script:
-  - source "$HOME/.cargo/env" && rustup show
-  - source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features combat_1_8_9::tests:: -j 2
-  - source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features item_tooltip::tests:: -j 2
+  - 'source "$HOME/.cargo/env" && rustup show'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features combat_1_8_9 -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features item_tooltip -j 2'
 
 test: off
