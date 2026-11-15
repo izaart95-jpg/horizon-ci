@@ -99,9 +99,10 @@
 >   screen is the 1.8 one (General, Blocks, Items and Mobs tabs, sorting and
 >   scrolling); its `CRAFTING_STATS` rows come from the generated 1.8 recipe
 >   set and the 1.8 smelting table.
->   Achievements are the 1.8 tree, screen and popup. Nothing grants them yet:
->   their criteria live on the 1.8 server, and the integrated server still
->   speaks 26.3 to the window.
+>   Achievements are the 1.8 tree, screen and popup, and the code that
+>   simulates the world grants them: single player's server thread is the one
+>   running the criteria, so the popup and the tree fill in as in 1.8.
+>   `exploreAllBiomes` waits for a 1.8 biome set.
 >
 > Stages 1–3, stage 4's registry and model set, stage 7's installer and the
 > client half of stage 5 are implemented; the rest is listed below. See
@@ -816,9 +817,20 @@ creates 34 entries on its 24-pixel grid, `StatsScreen`'s achievement button open
 `AchievementsScreen`, and a 1.8 server's statistics response arms the
 `GuiAchievement` popup. The screen's map is generated with the same
 `String.hashCode` seed, and a locked entry fades by its distance to the nearest
-taken parent. Debt: the client cannot grant an achievement itself, because the
-criteria run on the 1.8 server and the integrated server still speaks 26.3, so
-single player shows the tree with everything locked.
+taken parent. Every trigger the 1.8 criteria live in is ported to the code that
+simulates the world (the server thread, a LAN host or a dedicated server):
+crafting and furnace takes through `onCraftedBy`, pickups
+(`EntityItem.playerTouch`, `diamondsToYou` for the thrower), kills
+(`onKillEntity`'s IMob, `EntitySkeleton.onDeath`'s 50-block arrow,
+`EntityGhast.attackEntityFrom`'s deflected fireball, `dropFewItems`' wither box),
+breeding, `EntityPig.fall`, beacons (`constructBeacon` and the fourth layer),
+portals, minecart rails, brewing, `overkill` and `openInventory`. Counters reach a
+window through the statistics answer, and a `horizon:achievements` payload carries
+them over the internal protocol, which has no achievement registry. Debt:
+`exploreAllBiomes` is unwired (Horizon's biome set is the modern one, not
+`BiomeGenBase.explorationBiomes`), a repeat End exit re-credits `theEnd2`
+instead of `portal`, and a spectator's `openInventory` is blocked by the client
+before the action is sent.
 
 The enchanting table draws from 1.8's own 25-entry `enchantmentsList`, not the
 26.3 `#minecraft:in_enchanting_table` tag (which adds Mending, Frost Walker and
