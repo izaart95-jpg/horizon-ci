@@ -1,0 +1,75 @@
+name: horizon-ci
+
+on:
+  push:
+    branches: [android]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Compile the game binary (game.rs and game/)
+        run: cargo check -p horizon-client --bins --no-default-features -j 2
+      - name: 1.8 attack damage tests
+        run: cargo test -p horizon-client --lib --no-default-features combat_1_8_9::tests:: -j 2
+      - name: 1.8 tooltip tests
+        run: cargo test -p horizon-client --lib --no-default-features item_tooltip::tests:: -j 2
+
+  android-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: android-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            android-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Install NDK and Rust target
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          yes | "$sdkmanager" --sdk_root="$ANDROID_HOME" 'ndk;28.2.13676358' > /dev/null
+          rustup target add aarch64-linux-android
+      - name: Check the Android target
+        run: |
+          NDK="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64"
+          export CC_aarch64_linux_android="$NDK/bin/aarch64-linux-android24-clang"
+          export CXX_aarch64_linux_android="$NDK/bin/aarch64-linux-android24-clang++"
+          export AR_aarch64_linux_android="$NDK/bin/llvm-ar"
+          export RANLIB_aarch64_linux_android="$NDK/bin/llvm-ranlib"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK/bin/aarch64-linux-android24-clang"
+          cargo check -p horizon-android --target aarch64-linux-android --no-default-features -j 2
