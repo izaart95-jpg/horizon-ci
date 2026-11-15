@@ -221,3 +221,29 @@ To bring new `origin/android` work into the 1.8.9 build, follow
 [docs/android-sync.md](docs/android-sync.md): replay the new commits on top of
 `origin/android`, adapt anything that assumes 26.3, run the verification list,
 then update `docs/android-upstream.json`.
+
+### This workstation: build on AppVeyor, not locally
+
+This host has about 7 GiB of RAM and cannot survive a Rust build: `cargo
+check/build/test` and long foreground/tmux jobs get OOM-killed and take the
+agent harness with them. **Do not start a build here.** GitHub Actions is
+blocked for the account behind this fork, so `.github/workflows` never runs;
+use the public AppVeyor mirror instead:
+
+- Mirror: <https://github.com/izaart95-jpg/horizon-ci>, branch `android`
+  (<https://ci.appveyor.com/project/izaart95-jpg/horizon-ci>). It is only a
+  build vehicle: the real history stays in this repository, and the mirror is
+  never pushed back to `origin`.
+- Each run is a snapshot of the working tree: `git ls-files -z` plus
+  `git ls-files --others --exclude-standard -z` (so uncommitted work is
+  tested, while `.local/` and `target/` stay on this host). Keep the mirror's
+  own `appveyor.yml`; do not copy the upstream workflows into it.
+- AppVeyor gives each job 2 vCPUs, 7.5 GB and a hard 60-minute limit; the
+  free account has one concurrent job and a 1 GB cache. Put one check or
+  test group in each job and push again for the next one, rather than one
+  long build. Public logs: `https://ci.appveyor.com/api/buildjobs/<jobId>/log`;
+  the project API is
+  `https://ci.appveyor.com/api/projects/izaart95-jpg/horizon-ci`.
+- On this host `tail` hangs, and `du`, `df`, `unzip -l`, `git diff --stat`
+  and broad `find`/`grep` scans over `/tmp` can hang too. Use `head`, `sed`,
+  the read tool, Python `os.statvfs`, `zipfile` and explicit paths.

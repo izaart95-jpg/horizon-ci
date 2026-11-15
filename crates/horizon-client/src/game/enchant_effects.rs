@@ -111,7 +111,7 @@ impl Game<'_> {
         if horizon_core::target::is_1_8_9() {
             let tags = &world_stations!(self).enchantments.entity_tags;
             let in_tag = |name: &str| tags.get(name).is_some_and(|t| t.contains(target));
-            let bonus = crate::combat_1_8_9::enchantment_bonus(
+            let bonus = horizon_client::combat_1_8_9::enchantment_bonus(
                 &held,
                 in_tag("minecraft:sensitive_to_smite"),
                 in_tag("minecraft:sensitive_to_bane_of_arthropods"),
