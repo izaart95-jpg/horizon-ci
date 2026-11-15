@@ -947,50 +947,56 @@ impl Game<'_> {
             } else {
                 (interaction == BlockInteraction::DestroyWithDecay).then_some(radius)
             };
-            let spawn = self.ui.rules.bool("block_drops");
-            let mut drops = world_items!(self).block_drops_exploded(
-                self.pack.assets.registry,
-                state,
-                None,
-                &dynamic,
-                &mut self.world.random,
-                Some((&mut self.rand_sequences, self.level.seed)),
-                decay,
-                false,
-                spawn,
-            );
-            self.native_block_drops(pos, state, None, None, Some(radius), &mut drops);
-            // BlockOre/BlockRedstoneOre.randomDropAsItem: 1.8 pays ore
-            // experience after the drops and their chance draws, even when
-            // every chance failed. `dropXpOnBlockBreak` obeys doTileDrops.
-            if horizon_core::target::is_1_8_9()
-                && self.ui.rules.bool("block_drops")
-                && let Some(xp) = removal::explosion_experience(&mut self.world.random, &name)
-            {
-                self.spawn_orbs(
-                    [
-                        f64::from(pos[0]) + 0.5,
-                        f64::from(pos[1]) + 0.5,
-                        f64::from(pos[2]) + 0.5,
-                    ],
-                    xp,
+            // `BlockPistonMoving` drops the block its entity carries through
+            // `dropBlockAsItem(..., 0)`, which ignores the explosion chance.
+            let drop_state = self.drop_state_at(pos, state);
+            let carried = drop_state.is_some_and(|drop_state| drop_state != state);
+            if let Some(drop_state) = drop_state {
+                let spawn = self.ui.rules.bool("block_drops");
+                let mut drops = world_items!(self).block_drops_exploded(
+                    self.pack.assets.registry,
+                    drop_state,
+                    None,
+                    &dynamic,
+                    &mut self.world.random,
+                    Some((&mut self.rand_sequences, self.level.seed)),
+                    if carried { None } else { decay },
+                    false,
+                    spawn,
                 );
-            }
-            for mut drop in drops {
-                if &*drop.item == "minecraft:air" || drop.stack.count == 0 {
-                    continue;
+                self.native_block_drops(pos, state, None, None, Some(radius), &mut drops);
+                // BlockOre/BlockRedstoneOre.randomDropAsItem: 1.8 pays ore
+                // experience after the drops and their chance draws, even when
+                // every chance failed. `dropXpOnBlockBreak` obeys doTileDrops.
+                if horizon_core::target::is_1_8_9()
+                    && self.ui.rules.bool("block_drops")
+                    && let Some(xp) = removal::explosion_experience(&mut self.world.random, &name)
+                {
+                    self.spawn_orbs(
+                        [
+                            f64::from(pos[0]) + 0.5,
+                            f64::from(pos[1]) + 0.5,
+                            f64::from(pos[2]) + 0.5,
+                        ],
+                        xp,
+                    );
                 }
-                if horizon_core::target::is_1_8_9() {
-                    // 1.8 spawns each stack inside `dropBlockAsItemWithChance`,
-                    // so its position draws must not wait for the other blocks.
-                    self.pop_popped(pos, drop);
-                    continue;
+                for mut drop in drops {
+                    if &*drop.item == "minecraft:air" || drop.stack.count == 0 {
+                        continue;
+                    }
+                    if horizon_core::target::is_1_8_9() {
+                        // 1.8 spawns each stack inside `dropBlockAsItemWithChance`,
+                        // so its position draws must not wait for the other blocks.
+                        self.pop_popped(pos, drop);
+                        continue;
+                    }
+                    self.pending.attach(pos, &mut drop.stack);
+                    let items = self.res.items();
+                    add_or_append_stack(stacks, drop.stack, pos, &|s| {
+                        items.get(&s.item).map_or(64, |i| i.max_stack)
+                    });
                 }
-                self.pending.attach(pos, &mut drop.stack);
-                let items = self.res.items();
-                add_or_append_stack(stacks, drop.stack, pos, &|s| {
-                    items.get(&s.item).map_or(64, |i| i.max_stack)
-                });
             }
         }
         self.pending.clear(pos);

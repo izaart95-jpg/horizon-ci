@@ -363,10 +363,11 @@ impl BlockDrops {
             // entity and stays out of the drops; the block's own drop gets
             // fortune 0.
             84 => generic(&mut out, *row, random, chance, 0, spawn),
-            // PistonExtensionBlock.randomDropAsItem drops the pushed block
-            // through its moving-piston block entity. This engine has no
-            // pistons yet (docs/mc-1.8.9.md), so the block entity is absent
-            // and vanilla returns before any draw.
+            // `BlockPistonMoving.dropBlockAsItemWithChance` drops the block
+            // its moving-piston block entity carries, through that block's
+            // `dropBlockAsItem(..., 0)`; the world resolves the carried state
+            // before rolling (`Game::drop_state_at`). Without the entity
+            // vanilla draws nothing, so the table row is a no-op.
             36 => {}
             // BannerBlock.randomDropAsItem/harvest: a banner with a block
             // entity drops itself with the entity's base colour and patterns

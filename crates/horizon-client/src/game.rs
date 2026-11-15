@@ -3719,6 +3719,23 @@ impl Game<'_> {
             self.dropped.pop();
         }
     }
+    /// `MovingPistonBlock.getDrops`: a broken moving piston drops as the block
+    /// its block entity is moving, and drops nothing when the block entity is
+    /// gone. `BlockPistonMoving.dropBlockAsItemWithChance` ignores the chance
+    /// it was given and calls the carried block's `dropBlockAsItem(..., 0)`,
+    /// so the carried drop is rolled with chance 1 and fortune 0.
+    fn drop_state_at(&self, pos: [i32; 3], state: BlockStateId) -> Option<BlockStateId> {
+        if &*self.res.facts().get(state).name != "minecraft:moving_piston" {
+            return Some(state);
+        }
+        let carried = self
+            .world
+            .moving_pistons
+            .iter()
+            .find(|([x, y, z], _)| [*x, *y, *z] == pos)
+            .map(|(_, piston)| piston.moved_state)?;
+        (!self.res.facts().is_air(carried)).then_some(carried)
+    }
     /// `Block.getDrops` for a block a player breaks: the block's loot table
     /// with the player as `this`, drawing from its server random sequence
     /// (`LootContext.Builder.create`), else the level random.
@@ -3731,21 +3748,40 @@ impl Game<'_> {
         let registry = self.pack.assets.registry;
         let dynamic = self.pending.dynamic(pos);
         let spawn = self.ui.rules.bool("block_drops");
-        let mut drops = match world_items!(self).block_loot_sequence(registry, state) {
-            Some(sequence) => {
-                let random = self.rand_sequences.get(&sequence, self.level.seed);
-                self.res
-                    .items()
-                    .block_drops_by_player(registry, state, held, &dynamic, random, spawn)
-            }
-            None => world_items!(self).block_drops_by_player(
+        let Some(drop_state) = self.drop_state_at(pos, state) else {
+            return Vec::new();
+        };
+        // A moving piston's carried block is rolled through `dropBlockAsItem`,
+        // not `playerDestroy`, so no shears, silk touch or fortune apply.
+        let mut drops = if drop_state != state {
+            world_items!(self).block_drops_exploded(
                 registry,
-                state,
-                held,
+                drop_state,
+                None,
                 &dynamic,
                 &mut self.world.random,
+                None,
+                None,
+                false,
                 spawn,
-            ),
+            )
+        } else {
+            match world_items!(self).block_loot_sequence(registry, drop_state) {
+                Some(sequence) => {
+                    let random = self.rand_sequences.get(&sequence, self.level.seed);
+                    self.res
+                        .items()
+                        .block_drops_by_player(registry, drop_state, held, &dynamic, random, spawn)
+                }
+                None => world_items!(self).block_drops_by_player(
+                    registry,
+                    drop_state,
+                    held,
+                    &dynamic,
+                    &mut self.world.random,
+                    spawn,
+                ),
+            }
         };
         let player = self.native_acting_id();
         self.native_block_drops(pos, state, Some(player), held, None, &mut drops);

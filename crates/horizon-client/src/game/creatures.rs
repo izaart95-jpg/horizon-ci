@@ -2318,11 +2318,13 @@ impl Game<'_> {
                     if !self.res.facts().get(old).has_class("BaseFireBlock") {
                         self.destroy_particles(pos, old);
                     }
-                    if drop {
+                    if drop && let Some(drop_state) = self.drop_state_at(pos, old) {
+                        // A moving piston's carried block drops through
+                        // `dropBlockAsItem(..., 0)`: chance 1, fortune 0.
                         let spawn = self.ui.rules.bool("block_drops");
                         let mut drops = world_items!(self).block_drops_exploded(
                             self.pack.assets.registry,
-                            old,
+                            drop_state,
                             None,
                             &[],
                             &mut self.world.random,
