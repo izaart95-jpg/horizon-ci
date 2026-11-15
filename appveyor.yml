@@ -19,6 +19,7 @@ install:
 
 build_script:
   - source "$HOME/.cargo/env" && rustup show
-  - source "$HOME/.cargo/env" && cargo check -p horizon-client --bins --no-default-features -j 2
+  - source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features combat_1_8_9::tests:: -j 2
+  - source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features item_tooltip::tests:: -j 2
 
 test: off
