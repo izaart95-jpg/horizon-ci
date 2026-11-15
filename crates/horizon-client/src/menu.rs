@@ -289,6 +289,11 @@ pub struct Menu {
     /// Recipes whose result was taken (`awardUsedRecipes`) and the stacks that
     /// went into each, for the caller.
     pub crafted: Vec<(String, Vec<Option<ItemStack>>)>,
+    /// Stacks taken from a crafting or furnace result slot, for the caller:
+    /// `ItemStack.onCraftedBy`'s crafted statistic and the 1.8 achievements
+    /// of `SlotCrafting.onTake`/`FurnaceResultSlot.onTake`. The flag is true
+    /// for a furnace's result slot.
+    pub taken_results: Vec<(bool, ItemStack)>,
     /// Potions taken from a brewing stand's bottle slots
     /// (`PotionSlot.onTake`), for the caller.
     pub brewed: Vec<ItemStack>,
@@ -696,6 +701,7 @@ impl Menu {
             sounds: Vec::new(),
             player_sounds: Vec::new(),
             crafted: Vec::new(),
+            taken_results: Vec::new(),
             brewed: Vec::new(),
             equipped: Vec::new(),
             merchant: None,
@@ -1594,6 +1600,13 @@ impl Menu {
 
     /// `ResultSlot.onTake` and the other `Slot.onTake` overrides.
     fn on_take(&mut self, env: &Env, s: usize, taken: &ItemStack) {
+        if self.slots[s].role == Role::Output {
+            // `FurnaceResultSlot.checkTakeAchievements`: the crafted
+            // statistic and the iron-ingot/cooked-fish achievements, paid
+            // once per taken stack.
+            self.taken_results.push((true, taken.clone()));
+            return;
+        }
         if self.slots[s].role == Role::Potion {
             // BrewingStandMenu.PotionSlot.onTake: a stack with potion contents.
             if matches!(
@@ -1690,6 +1703,9 @@ impl Menu {
         if self.slots[s].role != Role::CraftResult {
             return;
         }
+        // `SlotCrafting.onTake` checks the taken result before the grid is
+        // consumed.
+        self.taken_results.push((false, taken.clone()));
         let n = self.grid_size;
         let grid = self.containers[GRID].clone();
         if let Some((id, _)) = env.recipes.find(&grid, n) {

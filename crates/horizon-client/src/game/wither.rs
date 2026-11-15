@@ -120,6 +120,19 @@ impl Game<'_> {
         }
         // SUMMONED_ENTITY for each player within 50 blocks of the wither's box.
         self.trigger_summoned(id, 50.0);
+        // `BlockSkull.checkSpawn`: every player within 50 blocks of the
+        // wither's box earns spawnWither.
+        if let Some(built) = id
+            .and_then(|id| self.mobs.iter().find(|m| m.id == id))
+            .cloned()
+        {
+            self.for_each_player_achievements(|g| {
+                if !g.near_mob_box(&built, 50.0) {
+                    return Vec::new();
+                }
+                g.server_achievement("spawnWither")
+            });
+        }
         self.update_pattern_blocks(&cells)
     }
     /// `WitherSkull.onHitEntity` / `onHit`: 8 `wither_skull` damage from a

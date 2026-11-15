@@ -1036,6 +1036,35 @@ impl Game<'_> {
         self.lan = Some(host);
     }
 
+    /// `for_each_player` for what the player's own window must hear: what `f`
+    /// returns is popped up for this game's player, and sent as a payload to a
+    /// guest's.
+    pub(super) fn for_each_player_achievements(
+        &mut self,
+        mut f: impl FnMut(&mut Self) -> Vec<(&'static str, i32)>,
+    ) {
+        if self.player.is_some() {
+            for (key, taken) in f(self) {
+                self.pop_achievement(key, taken);
+            }
+        }
+        let Some(mut host) = self.lan.take() else {
+            return;
+        };
+        let conns: Vec<u32> = host
+            .hub
+            .guests
+            .iter()
+            .filter(|g| host.hub.here(g) && g.loaded && !g.dead)
+            .map(|g| g.conn)
+            .collect();
+        for conn in conns {
+            let earned = self.as_guest(&mut host, conn, &mut f).unwrap_or_default();
+            self.send_result_achievements(&mut host, conn, &earned);
+        }
+        self.lan = Some(host);
+    }
+
     /// The game mode fields without `set_mode`'s side effects on the host.
     fn set_mode_raw(&mut self, id: i32) {
         use horizon_client::command::args::GameMode;
@@ -2262,6 +2291,27 @@ impl Game<'_> {
                     .map(|p| p.stats.take_dirty())
                     .unwrap_or_default();
                 host.hub.send_stats(conn, &stats);
+                // The 1.8 achievements are statistics too, and the current
+                // protocol has no stat type to name them with.
+                let achievements: Vec<(String, i32)> = host
+                    .play
+                    .get(&conn)
+                    .and_then(|p| p.stats.values.get("minecraft:achievement"))
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), *v)).collect())
+                    .unwrap_or_default();
+                if !achievements.is_empty() {
+                    host.hub
+                        .send_to(conn, &super::achievements::achievement_sync(&achievements));
+                }
+            }
+            // handleClientStatus OPEN_INVENTORY: the 1.8 client sends it when
+            // the inventory key opens its inventory (creative included). The
+            // current protocol's action 2 is request-game-rules instead.
+            S::ClientCommand(c) if c.action == 3 => {
+                let earned = self
+                    .as_guest(host, conn, |g| g.server_achievement("openInventory"))
+                    .unwrap_or_default();
+                self.send_result_achievements(host, conn, &earned);
             }
             // handlePickItemFromBlock: a block within the block reach plus 1, its
             // data only with infinite materials.
@@ -4250,8 +4300,26 @@ impl Game<'_> {
             }
             let stack = self.dropped[i].stack.clone();
             let before = stack.count;
+            let kind = stack.item.clone();
             let thrower = self.dropped[i].thrower;
-            let rest = self.as_guest(host, conn, |g| g.give(stack)).flatten();
+            let (rest, earned) = self
+                .as_guest(host, conn, |g| {
+                    let rest = g.give(stack);
+                    let took = rest.as_ref().map_or(before, |r| before - r.count);
+                    if took == 0 {
+                        return (rest, Vec::new());
+                    }
+                    // `EntityItem.playerTouch`'s achievements, then
+                    // `EntityPlayer.onItemPickup`'s statistic.
+                    let mut earned = Vec::new();
+                    for key in Game::pickup_achievements(&kind) {
+                        earned.extend(g.server_achievement(key));
+                    }
+                    g.stats.add("picked_up", &kind, took as i32);
+                    (rest, earned)
+                })
+                .unwrap_or((None, Vec::new()));
+            self.send_result_achievements(host, conn, &earned);
             match rest {
                 None => {
                     let item = self.remove_dropped(i);
@@ -4259,6 +4327,9 @@ impl Game<'_> {
                         self.as_guest(host, conn, |g| {
                             g.trigger_thrown_picked_up_by_player(&item.stack, thrower);
                         });
+                        if &*kind == "minecraft:diamond" && thrower != uuid {
+                            self.credit_diamond_thrower(host, thrower);
+                        }
                     }
                     self.guest_pickup(host, id, item);
                     taken.push((item_id, before));
@@ -4271,6 +4342,9 @@ impl Game<'_> {
                         self.as_guest(host, conn, |g| {
                             g.trigger_thrown_picked_up_by_player(&left, thrower);
                         });
+                        if &*kind == "minecraft:diamond" && thrower != uuid {
+                            self.credit_diamond_thrower(host, thrower);
+                        }
                     }
                     taken.push((item_id, before - self.dropped[i].stack.count));
                 }

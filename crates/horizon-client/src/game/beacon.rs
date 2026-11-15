@@ -209,34 +209,55 @@ impl Game<'_> {
                 if !client {
                     self.beacon_sound([x, y, z], "minecraft:block.beacon.activate");
                     let levels = b.levels;
-                    self.for_each_player(|g| g.beacon_constructed([x, y, z], levels));
+                    self.for_each_player_achievements(|g| g.beacon_constructed([x, y, z], levels));
                 }
             } else if was && !is && !client {
                 self.beacon_sound([x, y, z], "minecraft:block.beacon.deactivate");
+            }
+            // `TileEntityBeacon.update`: a pyramid that grew to four layers
+            // grants `fullBeacon` too (a fresh activation above covers 0 -> 4).
+            if was && is && !client && b.levels == 4 && previous < 4 {
+                self.for_each_player_achievements(|g| g.beacon_full([x, y, z]));
             }
         }
     }
     /// `BeaconBlockEntity.tick` after activating: `CONSTRUCT_BEACON` for a
     /// player in the box `AABB(x, y, z, x, y - 4, z).inflate(10, 5, 10)`.
-    fn beacon_constructed(&mut self, p: [i32; 3], levels: i32) {
+    fn beacon_constructed(&mut self, p: [i32; 3], levels: i32) -> Vec<(&'static str, i32)> {
+        if !self.beacon_player_in_box(p) {
+            return Vec::new();
+        }
+        self.trigger_construct_beacon(levels);
+        // `TileEntityBeacon`: a full four-layer pyramid.
+        if levels == 4 {
+            return self.server_achievement("fullBeacon");
+        }
+        Vec::new()
+    }
+    /// `fullBeacon` for a pyramid that reached four layers from a lower one.
+    fn beacon_full(&mut self, p: [i32; 3]) -> Vec<(&'static str, i32)> {
+        if !self.beacon_player_in_box(p) {
+            return Vec::new();
+        }
+        self.server_achievement("fullBeacon")
+    }
+    /// Whether this game's player box overlaps the beacon's achievement box.
+    fn beacon_player_in_box(&self, p: [i32; 3]) -> bool {
         let Some(bb) = self
             .player
             .as_ref()
             .map(|pl| pl.dimensions.bounds(pl.position))
         else {
-            return;
+            return false;
         };
         let (lo, hi) = (bb.min_position(), bb.max_position());
         let [x, y, z] = p.map(f64::from);
-        if lo.x < x + 10.0
+        lo.x < x + 10.0
             && hi.x > x - 10.0
             && lo.y < y + 5.0
             && hi.y > y - 9.0
             && lo.z < z + 10.0
             && hi.z > z - 10.0
-        {
-            self.trigger_construct_beacon(levels);
-        }
     }
     pub(super) fn beacon_sound(&mut self, p: [i32; 3], sound: &str) {
         let at = [

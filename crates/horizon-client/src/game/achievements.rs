@@ -463,6 +463,107 @@ fn notification_offset(d: f64, permanent: bool) -> Option<f64> {
     Some(-(e * 36.0).trunc())
 }
 
+/// The achievements a stack taken from a crafting grid earns, in
+/// `SlotCrafting.onTake`'s order.
+fn crafted_achievements(item: &str) -> Vec<&'static str> {
+    let pickaxe = item.ends_with("_pickaxe");
+    let mut keys = Vec::new();
+    if item == "minecraft:crafting_table" {
+        keys.push("buildWorkBench");
+    }
+    if pickaxe {
+        keys.push("buildPickaxe");
+    }
+    if item == "minecraft:furnace" {
+        keys.push("buildFurnace");
+    }
+    if item.ends_with("_hoe") {
+        keys.push("buildHoe");
+    }
+    if item == "minecraft:bread" {
+        keys.push("makeBread");
+    }
+    if item == "minecraft:cake" {
+        keys.push("bakeCake");
+    }
+    // `ItemPickaxe.getToolMaterial() != Item.ToolMaterial.WOOD`
+    if pickaxe && item != "minecraft:wooden_pickaxe" {
+        keys.push("buildBetterPickaxe");
+    }
+    if item.ends_with("_sword") {
+        keys.push("buildSword");
+    }
+    if item == "minecraft:enchanting_table" {
+        keys.push("enchantments");
+    }
+    if item == "minecraft:bookshelf" {
+        keys.push("bookcase");
+    }
+    // `Item.itemGoldenApple` with damage 1, the notch apple.
+    if item == "minecraft:enchanted_golden_apple" {
+        keys.push("overpowered");
+    }
+    keys
+}
+
+/// `FurnaceResultSlot.checkTakeAchievements`: an iron ingot or either cooked
+/// fish is enough.
+fn furnace_achievements(item: &str) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    if item == "minecraft:iron_ingot" {
+        keys.push("acquireIron");
+    }
+    if matches!(item, "minecraft:cooked_cod" | "minecraft:cooked_salmon") {
+        keys.push("cookFish");
+    }
+    keys
+}
+
+/// Horizon's custom-payload channel for achievement counters on the internal
+/// protocol: the current one has no achievement registry to name them with.
+pub(super) const CHANNEL: &str = "horizon:achievements";
+
+/// `ServerPlayer.changeDimension`'s achievement: entering the End, the exit
+/// portal out of it, and every other portal trip.
+pub(super) fn dimension_achievement(from: super::Dim, target: super::Dim) -> &'static str {
+    match (from, target) {
+        (super::Dim::Overworld, super::Dim::End) => "theEnd",
+        (super::Dim::End, super::Dim::Overworld) => "theEnd2",
+        _ => "portal",
+    }
+}
+
+/// A payload of `(key, counter)` entries: `kind` 0 syncs silently, 1 pops a
+/// new one up.
+fn achievement_payload(
+    kind: u8,
+    entries: &[(&str, i32)],
+) -> horizon_protocol::packets::configuration::CustomPayload {
+    let mut w = horizon_protocol::buf::Writer::new();
+    w.u8(kind);
+    w.varint(entries.len() as i32);
+    for (key, count) in entries {
+        w.string(key);
+        w.varint(*count);
+    }
+    horizon_protocol::packets::configuration::CustomPayload {
+        channel: CHANNEL.to_owned(),
+        data: w.data,
+    }
+}
+
+/// The whole achievement half of a statistics answer (a window opening the
+/// achievements screen asks for one).
+pub(super) fn achievement_sync(
+    counters: &[(String, i32)],
+) -> horizon_protocol::packets::play::Clientbound {
+    let entries: Vec<(&str, i32)> = counters
+        .iter()
+        .map(|(key, count)| (key.as_str(), *count))
+        .collect();
+    horizon_protocol::packets::play::Clientbound::CustomPayload(achievement_payload(0, &entries))
+}
+
 /// What the achievement popup currently shows.
 struct Shown {
     index: usize,
@@ -588,6 +689,241 @@ impl Game<'_> {
         }
         self.screen = Screen::Advancements;
         self.capture(false);
+    }
+    /// `EntityPlayer.addStat(achievement, 1)`'s counter: it goes up every
+    /// time. Returns whether this take is the first. 1.8 has no achievements
+    /// under the current protocol, only these counters.
+    fn add_achievement(&mut self, key: &str) -> bool {
+        if !horizon_core::target::is_1_8_9() || by_key(key).is_none() {
+            return false;
+        }
+        let first = self.stats.get("achievement", key) == 0;
+        self.stats.add("achievement", key, 1);
+        first
+    }
+    /// `EntityPlayer.addStat` for this game's own player: a first take also
+    /// pops the notification up.
+    pub(super) fn grant_achievement(&mut self, key: &str) -> bool {
+        let first = self.add_achievement(key);
+        if first && let Some(index) = by_key(key) {
+            self.ach_notify.display(index);
+        }
+        first
+    }
+    /// `EntityPlayer.addStat` for the player acting in this game. A LAN or
+    /// dedicated server has no window of its own: the acting guest's window
+    /// hears it as a payload. Everywhere else this game draws the popup.
+    pub(super) fn award_achievement(&mut self, key: &'static str) {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        if self.lan_acting.is_some() {
+            // Inside a guest's turn (their `as_guest`, or a command run for
+            // them): the payload leaves with their packets.
+            let earned = self.server_achievement(key);
+            if !earned.is_empty() {
+                self.guest_packets.push(
+                    horizon_protocol::packets::play::Clientbound::CustomPayload(
+                        achievement_payload(1, &earned),
+                    ),
+                );
+            }
+            return;
+        }
+        self.grant_achievement(key);
+    }
+    /// `ItemStack.onCraftedBy`'s crafted counter, then the achievements
+    /// `SlotCrafting.onTake` (`furnace == false`) or `SlotFurnace`'s take
+    /// (`furnace == true`) grants for the taken stack. Returns each
+    /// achievement with its new counter, for the window's statistics answer.
+    pub(super) fn server_result_taken(
+        &mut self,
+        furnace: bool,
+        item: &str,
+        count: i32,
+    ) -> Vec<(&'static str, i32)> {
+        if !horizon_core::target::is_1_8_9() {
+            return Vec::new();
+        }
+        self.stats.add("crafted", item, count);
+        let keys = if furnace {
+            furnace_achievements(item)
+        } else {
+            crafted_achievements(item)
+        };
+        keys.into_iter()
+            .filter_map(|key| {
+                self.add_achievement(key);
+                by_key(key).map(|_| (key, self.stats.get("achievement", key)))
+            })
+            .collect()
+    }
+    /// `EntityPlayer.addStat(achievement, 1)` on a server for a trigger other
+    /// than a crafting take: the new counter when it changed, for the
+    /// window's statistics answer.
+    pub(super) fn server_achievement(&mut self, key: &'static str) -> Vec<(&'static str, i32)> {
+        if !horizon_core::target::is_1_8_9() || by_key(key).is_none() {
+            return Vec::new();
+        }
+        self.add_achievement(key);
+        vec![(key, self.stats.get("achievement", key))]
+    }
+    /// `EntityPlayer.addStat` for a result taken from this game's own menu (the
+    /// in-frame single player, which is its own server): the counters move and
+    /// a first take pops up.
+    pub(super) fn on_result_taken(&mut self, furnace: bool, item: &str, count: i32) {
+        for (key, taken) in self.server_result_taken(furnace, item, count) {
+            self.pop_achievement(key, taken);
+        }
+    }
+    /// Draws the notification of a first take on the game that shows the
+    /// window (`AchievementMap`/`GuiAchievement` queue the popup from the
+    /// statistics answer; this Game is the one drawing it).
+    pub(super) fn pop_achievement(&mut self, key: &str, count: i32) {
+        if count == 1
+            && let Some(index) = by_key(key)
+        {
+            self.ach_notify.display(index);
+        }
+    }
+    /// `EntityItem.playerTouch`'s achievements for the picker: a log, leather,
+    /// a diamond and a blaze rod each have one.
+    pub(super) fn pickup_achievements(item: &str) -> Vec<&'static str> {
+        let mut keys = Vec::new();
+        if matches!(
+            item,
+            "minecraft:oak_log"
+                | "minecraft:spruce_log"
+                | "minecraft:birch_log"
+                | "minecraft:jungle_log"
+                | "minecraft:acacia_log"
+                | "minecraft:dark_oak_log"
+        ) {
+            keys.push("mineWood");
+        }
+        if item == "minecraft:leather" {
+            keys.push("killCow");
+        }
+        if item == "minecraft:diamond" {
+            keys.push("diamonds");
+        }
+        if item == "minecraft:blaze_rod" {
+            keys.push("blazeRod");
+        }
+        keys
+    }
+    /// `EntityItem.playerTouch`'s `diamondsToYou`: a diamond another player
+    /// threw, picked up by a different player, credits the thrower. The
+    /// thrower may be the game's own player, a LAN guest's record, or this
+    /// window's own player on the server thread.
+    pub(super) fn diamond_to_you(&mut self, thrower: [i32; 4], picker: [i32; 4]) {
+        if thrower == picker || !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        if self.lan.is_none() {
+            // Single player: the only thrower is this player.
+            return;
+        }
+        let Some(mut host) = self.lan.take() else {
+            return;
+        };
+        self.credit_diamond_thrower(&mut host, thrower);
+        self.lan = Some(host);
+    }
+    /// `diamond_to_you` with the LAN host already split off `self.lan`.
+    pub(super) fn credit_diamond_thrower(
+        &mut self,
+        host: &mut super::lan::LanHost,
+        thrower: [i32; 4],
+    ) {
+        let guest = host
+            .hub
+            .guests
+            .iter()
+            .position(|g| horizon_client::lan::playerdata::uuid_ints(g.uuid) == thrower);
+        let Some(gi) = guest else {
+            // The host's own player threw it, if it is still here.
+            if thrower == self.level.ensure_player_uuid() {
+                self.grant_achievement("diamondsToYou");
+            }
+            return;
+        };
+        let conn = host.hub.guests[gi].conn;
+        let Some(play) = host.play.get_mut(&conn) else {
+            return;
+        };
+        play.stats.add("achievement", "diamondsToYou", 1);
+        let count = play.stats.get("achievement", "diamondsToYou");
+        self.send_result_achievements(host, conn, &[("diamondsToYou", count)]);
+    }
+    /// The achievements the server sends a window after a result take (the
+    /// current protocol has no achievement registry to name them with).
+    pub(super) fn send_result_achievements(
+        &self,
+        host: &mut super::lan::LanHost,
+        conn: u32,
+        entries: &[(&'static str, i32)],
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        let packet = horizon_protocol::packets::play::Clientbound::CustomPayload(
+            achievement_payload(1, entries),
+        );
+        host.hub.send_to(conn, &packet);
+    }
+    /// The window's side of [`Self::send_result_achievements`]: save each
+    /// counter and pop the newly taken achievement up.
+    pub(super) fn receive_achievements(&mut self, data: &[u8]) {
+        let mut r = horizon_protocol::buf::Reader::new(data);
+        let Ok(kind) = r.u8() else {
+            return;
+        };
+        let Ok(n) = r.varint() else {
+            return;
+        };
+        for _ in 0..n.clamp(0, 64) {
+            let Ok(key) = r.string(64) else {
+                return;
+            };
+            let Ok(count) = r.varint() else {
+                return;
+            };
+            let Some(index) = by_key(&key) else {
+                continue;
+            };
+            let first = self.stats.get("achievement", &key) == 0 && count > 0;
+            self.stats
+                .values
+                .entry("minecraft:achievement".to_owned())
+                .or_default()
+                .insert(key.clone(), count);
+            if first && kind == 1 {
+                self.ach_notify.display(index);
+                if key == "openInventory" {
+                    self.settings.extras.show_inventory_achievement_hint = false;
+                    self.settings.save(&Self::options_path());
+                }
+            }
+        }
+    }
+    /// `Minecraft.runTick`'s inventory key: `C16PacketClientStatus.OPEN_INVENTORY`.
+    /// The 1.8 client sends it whenever the inventory key opens the inventory
+    /// screen (creative included), and a horse's inventory has its own
+    /// `EntityAction`, sent by the mount path.
+    pub(super) fn open_inventory_achievement(&mut self) {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        if self.remote.is_some() {
+            // 1.8's action 2; ours is 3 (2 is request-game-rules).
+            self.send(horizon_protocol::packets::play::Serverbound::ClientCommand(
+                horizon_protocol::packets::play::ClientCommand { action: 3 },
+            ));
+        } else {
+            // This game is the server (in-frame, or the LAN host's own player).
+            self.grant_achievement("openInventory");
+        }
     }
     /// `Screen.keyPressed`'s Escape and the inventory key: back to the game
     /// (1.8 does not return to the pause screen).
@@ -1265,5 +1601,116 @@ mod tests {
             0x0e38_aaf5u32 as i32,
         ];
         assert_eq!(session_hash(uuid), -687_387_784);
+    }
+
+    /// `SlotCrafting.checkTakeAchievements`' grants, in its order: a wooden
+    /// pickaxe is `buildPickaxe` alone, another material the better one too.
+    #[test]
+    fn one_eight_crafting_takes_grant_the_slot_achievements() {
+        assert_eq!(
+            crafted_achievements("minecraft:wooden_pickaxe"),
+            vec!["buildPickaxe"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:stone_pickaxe"),
+            vec!["buildPickaxe", "buildBetterPickaxe"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:crafting_table"),
+            vec!["buildWorkBench"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:furnace"),
+            vec!["buildFurnace"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:golden_hoe"),
+            vec!["buildHoe"]
+        );
+        assert_eq!(crafted_achievements("minecraft:bread"), vec!["makeBread"]);
+        assert_eq!(crafted_achievements("minecraft:cake"), vec!["bakeCake"]);
+        assert_eq!(
+            crafted_achievements("minecraft:diamond_sword"),
+            vec!["buildSword"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:enchanting_table"),
+            vec!["enchantments"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:bookshelf"),
+            vec!["bookcase"]
+        );
+        assert_eq!(
+            crafted_achievements("minecraft:enchanted_golden_apple"),
+            vec!["overpowered"]
+        );
+        // A plain golden apple is not the notch one.
+        assert!(crafted_achievements("minecraft:golden_apple").is_empty());
+        assert!(crafted_achievements("minecraft:diamond").is_empty());
+    }
+
+    /// `FurnaceResultSlot.checkTakeAchievements`: an iron ingot or either
+    /// cooked fish; a raw fish and everything else grant nothing.
+    #[test]
+    fn one_eight_furnace_takes_grant_acquire_iron_and_cook_fish() {
+        assert_eq!(
+            furnace_achievements("minecraft:iron_ingot"),
+            vec!["acquireIron"]
+        );
+        assert_eq!(
+            furnace_achievements("minecraft:cooked_cod"),
+            vec!["cookFish"]
+        );
+        assert_eq!(
+            furnace_achievements("minecraft:cooked_salmon"),
+            vec!["cookFish"]
+        );
+        assert!(furnace_achievements("minecraft:cod").is_empty());
+        assert!(furnace_achievements("minecraft:gold_ingot").is_empty());
+    }
+
+    /// `EntityItem.playerTouch`: one achievement per picked stack.
+    #[test]
+    fn one_eight_pickups_grant_their_items_achievement() {
+        assert_eq!(pickup_achievements("minecraft:oak_log"), vec!["mineWood"]);
+        assert_eq!(
+            pickup_achievements("minecraft:dark_oak_log"),
+            vec!["mineWood"]
+        );
+        assert_eq!(pickup_achievements("minecraft:leather"), vec!["killCow"]);
+        assert_eq!(pickup_achievements("minecraft:diamond"), vec!["diamonds"]);
+        assert_eq!(pickup_achievements("minecraft:blaze_rod"), vec!["blazeRod"]);
+        assert!(pickup_achievements("minecraft:dirt").is_empty());
+        // Planks are not logs, though both are wood.
+        assert!(pickup_achievements("minecraft:oak_planks").is_empty());
+    }
+
+    /// `EntityPlayerMP.changeDimension`: entering the End, leaving it and
+    /// every other portal trip.
+    #[test]
+    fn one_eight_dimension_travel_grants_its_achievement() {
+        use super::super::Dim;
+        assert_eq!(dimension_achievement(Dim::Overworld, Dim::End), "theEnd");
+        assert_eq!(dimension_achievement(Dim::End, Dim::Overworld), "theEnd2");
+        assert_eq!(dimension_achievement(Dim::Overworld, Dim::Nether), "portal");
+        assert_eq!(dimension_achievement(Dim::Nether, Dim::Overworld), "portal");
+        assert_eq!(dimension_achievement(Dim::Nether, Dim::End), "portal");
+        assert_eq!(dimension_achievement(Dim::End, Dim::Nether), "portal");
+    }
+
+    /// The payload's wire form: kind, count, then each key length, key and
+    /// counter.
+    #[test]
+    fn one_eight_achievement_payload_layout() {
+        let payload = achievement_payload(1, &[("ghast", 3), ("overkill", 1)]);
+        assert_eq!(payload.channel, "horizon:achievements");
+        let mut expected = vec![1u8, 2, 5];
+        expected.extend_from_slice(b"ghast");
+        expected.push(3);
+        expected.push(8);
+        expected.extend_from_slice(b"overkill");
+        expected.push(1);
+        assert_eq!(payload.data, expected);
     }
 }

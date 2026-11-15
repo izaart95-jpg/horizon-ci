@@ -130,15 +130,32 @@ impl Game<'_> {
         let equipped = std::mem::take(&mut menu.equipped);
         let brewed = std::mem::take(&mut menu.brewed);
         let crafted = std::mem::take(&mut menu.crafted);
+        let taken = std::mem::take(&mut menu.taken_results);
         menu.drops.clear();
         store_player(menu, &mut host.hub.guests[gi]);
         if !brewed.is_empty() {
             let conn = host.hub.guests[gi].conn;
-            self.as_guest(host, conn, |g| {
-                for stack in &brewed {
-                    g.trigger_brewed_potion(stack);
-                }
-            });
+            let earned = self
+                .as_guest(host, conn, |g| {
+                    let mut potion = false;
+                    for stack in &brewed {
+                        g.trigger_brewed_potion(stack);
+                        // `SlotBrewingStandPotion.onTake`: a potion that is
+                        // not a water bottle.
+                        if &*stack.item == "minecraft:potion"
+                            && stack.potion().is_some_and(|p| p != "minecraft:water")
+                        {
+                            potion = true;
+                        }
+                    }
+                    if potion {
+                        g.server_achievement("potion")
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .unwrap_or_default();
+            self.send_result_achievements(host, conn, &earned);
         }
         if !crafted.is_empty() {
             let conn = host.hub.guests[gi].conn;
@@ -147,6 +164,20 @@ impl Game<'_> {
                     g.trigger_recipe_crafted(recipe, ingredients);
                 }
             });
+        }
+        if !taken.is_empty() {
+            let conn = host.hub.guests[gi].conn;
+            let earned = self
+                .as_guest(host, conn, |g| {
+                    taken
+                        .iter()
+                        .flat_map(|(furnace, stack)| {
+                            g.server_result_taken(*furnace, &stack.item, stack.count as i32)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            self.send_result_achievements(host, conn, &earned);
         }
         if !equipped.is_empty() {
             let conn = host.hub.guests[gi].conn;

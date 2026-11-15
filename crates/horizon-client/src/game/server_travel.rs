@@ -385,9 +385,16 @@ impl Game<'_> {
         // Entity.handlePortal set before the teleport.
         host.hub
             .change_level(i, at, yaw, None, true, PLAYER_DELAY, &ctx);
-        self.as_guest(host, conn, |g| {
-            g.trigger_dimension(source, target, [from.x, from.y, from.z])
-        });
+        let earned = self
+            .as_guest(host, conn, |g| {
+                g.trigger_dimension(source, target, [from.x, from.y, from.z]);
+                // `EntityPlayerMP.changeDimension`: entering the End, the exit
+                // portal (End to Overworld, after the credits), and any other
+                // portal trip.
+                g.server_achievement(super::achievements::dimension_achievement(source, target))
+            })
+            .unwrap_or_default();
+        self.send_result_achievements(host, conn, &earned);
         self.server_trips.push(Trip {
             conn,
             dim: target,

@@ -2969,6 +2969,10 @@ impl Game<'_> {
             C::CustomPayload(p) if p.channel == horizon_protocol::mod_net::CHANNEL => {
                 self.remote_native_net(&p.data);
             }
+            // 1.8 achievements: counters and the popup of a first take.
+            C::CustomPayload(p) if p.channel == super::achievements::CHANNEL => {
+                self.receive_achievements(&p.data);
+            }
             // PingDebugMonitor.onPongReceived.
             C::PongResponse(p) => {
                 let delay = self.debug_millis() - p.time;

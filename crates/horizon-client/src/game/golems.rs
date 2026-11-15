@@ -103,22 +103,35 @@ impl Game<'_> {
         else {
             return;
         };
+        if self.near_mob_box(&built, reach) {
+            let view = self.mob_entity(&built);
+            self.trigger_entity("minecraft:summoned_entity", "entity", &view);
+        }
+    }
+    /// Whether this game's player box is within `reach` blocks of the mobile
+    /// box of `built` (the local player here; the caller runs it per player).
+    pub(super) fn near_mob_box(&self, built: &horizon_client::mobs::Mob, reach: f64) -> bool {
+        self.near_mob_box_axes(built, (reach, reach, reach))
+    }
+    /// [`Self::near_mob_box`] with one reach per axis (`AABB.inflate(dx, dy, dz)`).
+    pub(super) fn near_mob_box_axes(
+        &self,
+        built: &horizon_client::mobs::Mob,
+        reach: (f64, f64, f64),
+    ) -> bool {
         let me = self.player_entity();
         let half = f64::from(built.width()) / 2.0;
         let height = f64::from(built.height());
         let [x, y, z] = me.position;
         let p = built.position;
+        let (rx, ry, rz) = reach;
         // The player's box is 0.6 wide and 1.8 tall.
-        let near = x + 0.3 >= p.x - half - reach
-            && x - 0.3 <= p.x + half + reach
-            && y + 1.8 >= p.y - reach
-            && y <= p.y + height + reach
-            && z + 0.3 >= p.z - half - reach
-            && z - 0.3 <= p.z + half + reach;
-        if near {
-            let view = self.mob_entity(&built);
-            self.trigger_entity("minecraft:summoned_entity", "entity", &view);
-        }
+        x + 0.3 >= p.x - half - rx
+            && x - 0.3 <= p.x + half + rx
+            && y + 1.8 >= p.y - ry
+            && y <= p.y + height + ry
+            && z + 0.3 >= p.z - half - rz
+            && z - 0.3 <= p.z + half + rz
     }
     /// Whether placing a golem head at `head` completes a golem.
     pub(super) fn completes_golem(&self, head: [i32; 3]) -> bool {

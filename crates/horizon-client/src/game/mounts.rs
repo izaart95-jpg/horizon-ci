@@ -575,8 +575,18 @@ impl Game<'_> {
     /// player, the server players and the mob on its back each get it, with
     /// their own safe distance and armour.
     pub(super) fn fall_to_passengers(&mut self, mob: u32, distance: f64, modifier: f32) {
+        // `EntityPig.fall`: a rider of a pig that fell more than five blocks
+        // earns flyPig.
+        let pig = distance >= 5.0
+            && self
+                .mobs
+                .iter()
+                .any(|m| m.id == mob && m.species() == Species::Pig);
         if self.riding == Some(mob) {
             self.rider_fall_damage(distance, modifier);
+            if pig {
+                self.award_achievement("flyPig");
+            }
         }
         let guests: Vec<u32> = self.lan.as_ref().map_or_else(Vec::new, |h| {
             h.hub
@@ -591,6 +601,12 @@ impl Game<'_> {
         {
             for conn in guests {
                 self.guest_hit_by(&mut host, conn, |g| g.rider_fall_damage(distance, modifier));
+                if pig {
+                    let earned = self
+                        .as_guest(&mut host, conn, |g| g.server_achievement("flyPig"))
+                        .unwrap_or_default();
+                    self.send_result_achievements(&mut host, conn, &earned);
+                }
             }
             self.lan = Some(host);
         }

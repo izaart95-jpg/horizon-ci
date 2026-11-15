@@ -587,6 +587,7 @@ impl Game<'_> {
             p.pose == horizon_client::pose::Pose::Swimming,
         );
         let climbing = p.last_climbable.is_some() && d.y > 0.0;
+        let feet_pos = p.position;
         let riding = self.riding.map(|id| {
             self.mobs
                 .iter()
@@ -594,6 +595,8 @@ impl Game<'_> {
                 .map(|m| m.species())
                 .ok_or(())
         });
+        let cart_ride =
+            matches!(riding, Some(Err(()))) && self.carts.iter().any(|c| Some(c.id) == self.riding);
         let s = &mut self.stats;
         match riding {
             Some(Ok(sp)) => {
@@ -640,6 +643,27 @@ impl Game<'_> {
             // (creative flight, or a long jump), not only flying.
             None if horizontal > 25 => s.custom("fly_one_cm", horizontal),
             None => {}
+        }
+        // `EntityPlayer.checkMovementStatistics`' minecart branch: the ride's
+        // first block, and 1000 blocks (1e6 squared) away from it.
+        if cart_ride && total > 0 && horizon_core::target::is_1_8_9() {
+            let at = [
+                feet_pos.x.floor() as i32,
+                feet_pos.y.floor() as i32,
+                feet_pos.z.floor() as i32,
+            ];
+            let uuid = self.acting_uuid();
+            match self.minecart_start.get(&uuid).copied() {
+                None => {
+                    self.minecart_start.insert(uuid, at);
+                }
+                Some(start) => {
+                    let away: f64 = (0..3).map(|i| f64::from(at[i] - start[i]).powi(2)).sum();
+                    if away >= 1.0e6 {
+                        self.award_achievement("onARail");
+                    }
+                }
+            }
         }
     }
     /// `PhantomSpawner.tick`: tired players under an open night sky draw

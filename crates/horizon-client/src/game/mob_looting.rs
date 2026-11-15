@@ -185,16 +185,24 @@ impl Game<'_> {
     }
 
     /// `LivingEntity.onItemPickup`: the advancement of whoever threw the item,
-    /// whichever mob took it.
+    /// whichever mob took it. `EntityLiving.a(EntityItem)` also grants
+    /// `diamondsToYou` to the thrower of a diamond.
     pub(super) fn mob_item_pickup_trigger(&mut self, index: usize, e: &ItemEntity) {
         let Some(owner) = e.thrower else {
             return;
         };
         let stack = e.stack.clone();
+        let diamond = &*stack.item == "minecraft:diamond";
         let target = self.mob_entity(&self.mobs[index]);
-        self.for_each_player(|g| {
-            if g.acting_uuid() == owner {
-                g.trigger_item_entity("minecraft:thrown_item_picked_up_by_entity", &stack, &target);
+        self.for_each_player_achievements(|g| {
+            if g.acting_uuid() != owner {
+                return Vec::new();
+            }
+            g.trigger_item_entity("minecraft:thrown_item_picked_up_by_entity", &stack, &target);
+            if diamond {
+                g.server_achievement("diamondsToYou")
+            } else {
+                Vec::new()
             }
         });
     }

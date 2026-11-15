@@ -2878,6 +2878,9 @@ struct Game<'a> {
     chat_capture: Option<Vec<horizon_client::text::Text>>,
     /// Packets for the guest acting now, sent once its action returns.
     guest_packets: Vec<horizon_protocol::packets::play::Clientbound>,
+    /// `EntityPlayer.minecartStartPos` per player: the first block a minecart
+    /// ride moved them from, for `onARail` (1e6 squared away from it).
+    minecart_start: std::collections::BTreeMap<[i32; 4], [i32; 3]>,
     /// The acting guest's cooldowns, as (item, ticks): their packet needs the
     /// hub's item registry, which the guest's turn does not hold.
     guest_cooldowns: Vec<(Arc<str>, i32)>,
@@ -4111,9 +4114,17 @@ impl Game<'_> {
                 let thrower = item.thrower;
                 match self.give(item.stack.clone()) {
                     None => {
+                        // `EntityItem.playerTouch`'s achievements, then
+                        // `EntityPlayer.onItemPickup`'s statistic.
+                        for key in Self::pickup_achievements(&kind) {
+                            self.grant_achievement(key);
+                        }
                         self.stats.add("picked_up", &kind, before as i32);
                         if let Some(thrower) = thrower {
                             self.trigger_thrown_picked_up_by_player(&item.stack, thrower);
+                            if &*kind == "minecraft:diamond" {
+                                self.diamond_to_you(thrower, own);
+                            }
                         }
                         self.add_pickup(
                             pickups::Taken::Item(Box::new(item)),
@@ -4130,10 +4141,16 @@ impl Game<'_> {
                     }
                     Some(rest) => {
                         if rest.count < before {
+                            for key in Self::pickup_achievements(&kind) {
+                                self.grant_achievement(key);
+                            }
                             self.stats
                                 .add("picked_up", &kind, (before - rest.count) as i32);
                             if let Some(thrower) = thrower {
                                 self.trigger_thrown_picked_up_by_player(&rest, thrower);
+                                if &*kind == "minecraft:diamond" {
+                                    self.diamond_to_you(thrower, own);
+                                }
                             }
                             self.add_pickup(
                                 pickups::Taken::Item(Box::new(item.clone())),
@@ -9830,6 +9847,7 @@ impl Game<'_> {
             self.player_menu_sound(sound);
         }
         let crafted = std::mem::take(&mut menu.crafted);
+        let taken = std::mem::take(&mut menu.taken_results);
         let brewed = std::mem::take(&mut menu.brewed);
         let equipped = std::mem::take(&mut menu.equipped);
         for (i, stack) in after.into_iter().enumerate() {
@@ -9846,8 +9864,19 @@ impl Game<'_> {
                 self.player_drop(stack);
             }
             self.award_crafted(&crafted);
+            for (furnace, stack) in taken {
+                // `ItemStack.onCraftedBy` then the slot's achievements.
+                self.on_result_taken(furnace, &stack.item, stack.count as i32);
+            }
             for stack in &brewed {
                 self.trigger_brewed_potion(stack);
+                // `SlotBrewingStandPotion.onTake`: a potion that is not a
+                // water bottle.
+                if &*stack.item == "minecraft:potion"
+                    && stack.potion().is_some_and(|p| p != "minecraft:water")
+                {
+                    self.award_achievement("potion");
+                }
             }
             if furnace_before > furnace_after
                 && self.remote.is_none()
@@ -10491,6 +10520,7 @@ impl Game<'_> {
             let Some(result) = self.slot_mut(302).take() else {
                 return;
             };
+            let taken = result.clone();
             match &mut self.carried {
                 None => self.carried = Some(result),
                 Some(c)
@@ -10499,8 +10529,14 @@ impl Game<'_> {
                 {
                     c.count += result.count
                 }
-                _ => *self.slot_mut(302) = Some(result),
+                _ => {
+                    *self.slot_mut(302) = Some(result);
+                    return;
+                }
             }
+            // `SlotFurnace.checkTakeAchievements`: the crafted counter and the
+            // iron-ingot/cooked-fish achievements.
+            self.on_result_taken(true, &taken.item, taken.count as i32);
             return;
         }
         // Changing the input restarts cooking (AbstractFurnaceBlockEntity.setItem).
@@ -10550,7 +10586,9 @@ impl Game<'_> {
                     }
                 }
                 crafted += 1;
-                self.stats.add("crafted", &made.0, made.1 as i32);
+                // `SlotCrafting.onTake`: the crafted counter and the crafting
+                // achievements of the taken stack.
+                self.on_result_taken(false, &made.0, made.1 as i32);
                 self.award_crafted(&[(format!("minecraft:{recipe}"), ingredients)]);
                 if !shift || crafted >= 64 {
                     break;
@@ -11488,6 +11526,11 @@ impl Game<'_> {
             });
         }
         if landed {
+            // `EntityPlayer.attackTargetEntityWithCurrentItem`: a hit of 18
+            // (nine hearts) or more before armor.
+            if amount >= 18.0 {
+                self.award_achievement("overkill");
+            }
             if knockback > 0.0 {
                 let (xd, zd) = self.extra_knockback_direction();
                 self.mobs[index].knockback(f64::from(knockback), xd, zd);
@@ -12094,6 +12137,9 @@ impl Game<'_> {
         let destination = self.switch_level(target, player.position)?;
         let at = player.position;
         self.trigger_dimension(from, target, [at.x, at.y, at.z]);
+        // `EntityPlayerMP.changeDimension`: entering the End, leaving it, and
+        // any other portal trip.
+        self.grant_achievement(achievements::dimension_achievement(from, target));
         self.travelling = Some((player, destination));
         self.end_travel = (target == Dim::End || from == Dim::End) && self.end_portal_travel;
         Ok(())
@@ -15968,6 +16014,8 @@ impl Game<'_> {
                             self.screen = Screen::Inventory;
                         }
                         self.capture(false);
+                        // ClientStatus.OPEN_INVENTORY, sent before the screen.
+                        self.open_inventory_achievement();
                     }
                 }
                 Screen::Creative => {
@@ -18849,6 +18897,7 @@ impl<'a> Game<'a> {
             lan_acting: None,
             lan_break_pos: None,
             guest_packets: Vec::new(),
+            minecart_start: std::collections::BTreeMap::new(),
             guest_cooldowns: Vec::new(),
             guest_entity_events: Vec::new(),
             guest_equipment_breaks: Vec::new(),

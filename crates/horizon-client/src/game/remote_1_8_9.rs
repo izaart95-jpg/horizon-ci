@@ -1299,6 +1299,8 @@ impl Game<'_> {
             }),
             C::ClientCommand(p) => match p.action {
                 0 | 1 => P::ClientCommand(play18::ClientCommand { action: p.action }),
+                // `ClientStatus.OPEN_INVENTORY`: the 1.8 action 2.
+                3 => P::ClientCommand(play18::ClientCommand { action: 2 }),
                 _ => return None,
             },
             C::Punch(_) => P::ArmAnimation(play18::ArmAnimation {}),

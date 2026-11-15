@@ -1151,6 +1151,17 @@ impl Game<'_> {
         self.tell_owner_pet_died(m, killer);
         self.love_cause.remove(&m.id);
         let by_player = killer.is_some() || m.ai.last_hurt_by_player > 0;
+        // `EntityWither.dropFewItems`: every player within the wither's box
+        // expanded (50, 100, 50) earns `killWither`, its killer or not.
+        if m.species() == Species::Wither {
+            self.for_each_player_achievements(|g| {
+                if g.near_mob_box_axes(m, (50.0, 100.0, 50.0)) {
+                    g.server_achievement("killWither")
+                } else {
+                    Vec::new()
+                }
+            });
+        }
         let mut dying = m.clone();
         // LivingEntity.die: the death is heard, and a sculk catalyst nearby
         // takes the experience (before the loot is dropped). It takes what
@@ -1191,18 +1202,24 @@ impl Game<'_> {
             // A guest's kill is theirs: their statistics, scores and
             // advancements (LivingEntity.die credits lastHurtByPlayer).
             let guest = killer.flatten().filter(|_| self.lan_acting.is_none());
-            let credited = guest.is_some_and(|conn| {
-                let Some(mut host) = self.lan.take() else {
-                    return false;
-                };
-                let done = self
-                    .as_guest(&mut host, conn, |g| g.credit_kill(m))
-                    .is_some();
-                self.lan = Some(host);
-                done
-            });
+            let credited = if let Some(conn) = guest {
+                if let Some(mut host) = self.lan.take() {
+                    let earned = self.as_guest(&mut host, conn, |g| g.credit_kill(m));
+                    if let Some(earned) = earned {
+                        self.send_result_achievements(&mut host, conn, &earned);
+                    }
+                    self.lan = Some(host);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
             if !credited {
-                self.credit_kill(m);
+                for (key, taken) in self.credit_kill(m) {
+                    self.pop_achievement(key, taken);
+                }
             }
         }
         self.score_entity_removed(m.id);
@@ -1255,7 +1272,7 @@ impl Game<'_> {
     }
     /// The killer's side of a mob's death: `ServerPlayer.awardKillScore`'s
     /// statistics and scores, and the `player_killed_entity` trigger.
-    fn credit_kill(&mut self, m: &Mob) {
+    fn credit_kill(&mut self, m: &Mob) -> Vec<(&'static str, i32)> {
         // Player.killedEntity: the killed statistic goes to the causing
         // entity, so a kill by a mob (a tame wolf credited to its owner)
         // leaves it out; ServerPlayer.awardKillScore counts the rest.
@@ -1263,10 +1280,34 @@ impl Game<'_> {
             self.stats.add("killed", &m.kind.id, 1);
         }
         self.stats.custom("mob_kills", 1);
+        // `EntityPlayer.onKillEntity`: an IMob's kill. The ghast's own
+        // achievement is a deflected fireball (`player_hurt_mob`), and the
+        // wither's reaches every player near its death (`mob_died`).
+        let mut earned = Vec::new();
+        if !killed_by_mob(m) {
+            if m.hostile() {
+                earned.extend(self.server_achievement("killEnemy"));
+            }
+            // `EntitySkeleton.onDeath`: an arrow from a player at least 50
+            // blocks away, measured on the horizontal plane.
+            if matches!(m.species(), Species::Skeleton | Species::WitherSkeleton)
+                && let Some((d, _)) = m.last_damage
+                && d.kind == DamageKind::Arrow
+                && matches!(d.attacker, Some(Who::Player))
+                && let Some(p) = self.player.as_ref()
+            {
+                let dx = p.position.x - m.position.x;
+                let dz = p.position.z - m.position.z;
+                if dx * dx + dz * dz >= 2500.0 {
+                    earned.extend(self.server_achievement("snipeSkeleton"));
+                }
+            }
+        }
         self.score_player_killed(super::commands::Target::Mob(m.id));
         let view = self.mob_entity(m);
         let blow = m.last_damage.map(|(d, _)| self.damage_view(d));
         self.trigger_killed(&view, blow.as_ref());
+        earned
     }
     /// A mob's damage source as advancement predicates see it: its type, the
     /// causing entity, and the projectile when one dealt it.
@@ -2757,6 +2798,11 @@ impl Game<'_> {
             self.for_player(who, |g| {
                 g.stats.custom("animals_bred", 1);
                 g.trigger_bred(&parent, &partner_view, (!turtle).then_some(&child));
+                // `EntityAnimal.spawnChildFromBreeding`: a cow's calf
+                // (`EntityMooshroom extends EntityCow`).
+                if matches!(p.species(), Species::Cow | Species::Mooshroom) {
+                    g.award_achievement("breedCow");
+                }
             });
         }
         if let Some(q) = self.mobs.iter_mut().find(|m| m.id == partner) {
@@ -3590,6 +3636,18 @@ impl Game<'_> {
     fn player_hurt_mob(&mut self, p: &Projectile, id: u32) {
         if p.owner == Some(Who::Player) {
             self.last_hurt_by_player.insert(id, self.lan_acting);
+            // `EntityGhast.attackEntityFrom`: a fireball a player turned back
+            // grants `ghast` (and `Ghast.isReflectedFireball` kills it).
+            if matches!(
+                p.kind,
+                ProjectileKind::SmallFireball | ProjectileKind::LargeFireball { .. }
+            ) && self
+                .mobs
+                .iter()
+                .any(|m| m.id == id && m.species() == Species::Ghast)
+            {
+                self.award_achievement("ghast");
+            }
         }
     }
     /// `projectile_hit` for a projectile the guest `conn` shot, run as them;
