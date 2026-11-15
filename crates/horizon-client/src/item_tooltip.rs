@@ -140,38 +140,82 @@ fn attribute_color(attribute: &str, rises: bool) -> u32 {
     }
 }
 
-/// 1.8's `ItemStack.getTooltip` attribute block: an empty line and the
-/// weapon's main-hand attack damage (`ItemStack.MODIFIER_FORMAT`,
+/// 1.8's `ItemStack.getTooltip` attribute block: an empty line and one line
+/// per modifier of `ItemStack.getAttributes` (`ItemStack.MODIFIER_FORMAT`,
 /// `DecimalFormat("#.###")`), with `EnchantmentHelper.getAttackDamage`'s
-/// Sharpness bonus already added and no "When in Main Hand:" header. The
-/// colour is `Formatting.BLUE`; 1.8 had no separate base-attack-damage row,
-/// so every line is a plus.
+/// Sharpness bonus added to the attack-damage one and no "When in Main Hand:"
+/// header. The colour is `Formatting.BLUE`, `Formatting.RED` when negative;
+/// 1.8 had no separate base-attack-damage row, so every line is plus or take.
 pub fn attribute_lines_1_8_9(
     stack: &ItemStack,
     translate: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<(String, u32)> {
-    let Some(base) = crate::combat_1_8_9::attack_damage(&stack.item) else {
-        return Vec::new();
-    };
-    let amount = base + crate::combat_1_8_9::enchantment_bonus(stack, false, false);
-    if amount <= 0.0 {
+    // A stack's own `AttributeModifiers` NBT replaces the item's defaults
+    // (ItemStack.getAttributes); `Some` with an empty list is a real answer.
+    let modifiers = crate::combat_1_8_9::stack_modifiers(stack)
+        .unwrap_or_else(|| crate::combat_1_8_9::attack_modifier(&stack.item));
+    if modifiers.is_empty() {
         return Vec::new();
     }
     let text = |key: &str, fallback: &str| translate(key).unwrap_or_else(|| fallback.to_owned());
-    // `DecimalFormat("#.###")` of a positive float, e.g. 13.25.
-    let shown = {
-        let text = format!("{amount:.3}");
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    };
-    let line = crate::text::format_translation(
-        &text("attribute.modifier.plus.0", "+%s %s"),
-        &[
-            Text::literal(shown),
-            Text::literal(text("attribute.name.generic.attackDamage", "Attack Damage")),
-        ],
-    )
-    .plain();
-    vec![(String::new(), u32::MAX), (line, rgba(85, 85, 255, 255))]
+    let mut lines = vec![(String::new(), u32::MAX)];
+    for (attribute, id, amount, operation, _) in modifiers {
+        // Only the fixed attack-damage UUID carries the enchantment bonus.
+        let bonus = if id == "minecraft:base_attack_damage" {
+            crate::combat_1_8_9::enchantment_bonus(stack, false, false)
+        } else {
+            0.0
+        };
+        let damage = amount + bonus;
+        if damage == 0.0 {
+            continue;
+        }
+        let op = match operation.as_str() {
+            "add_multiplied_base" => 1,
+            "add_multiplied_total" => 2,
+            _ => 0,
+        };
+        let shown = if op == 0 { damage } else { damage * 100.0 };
+        let (shown, verb) = if damage > 0.0 {
+            (shown, "plus")
+        } else {
+            (-shown, "take")
+        };
+        let fallback = match (verb, op) {
+            ("plus", 0) => "+%s %s",
+            ("plus", _) => "+%s%% %s",
+            (_, 0) => "-%s %s",
+            _ => "-%s%% %s",
+        };
+        let key = format!("attribute.modifier.{verb}.{op}");
+        let name_key = crate::combat_1_8_9::attribute_display_key(&attribute);
+        let line = crate::text::format_translation(
+            &text(&key, fallback),
+            &[
+                Text::literal(modifier_amount_1_8_9(shown)),
+                Text::literal(text(&name_key, &attribute)),
+            ],
+        )
+        .plain();
+        let colour = if damage > 0.0 {
+            rgba(85, 85, 255, 255)
+        } else {
+            rgba(255, 85, 85, 255)
+        };
+        lines.push((line, colour));
+    }
+    lines
+}
+
+/// `DecimalFormat("#.###")`: three decimals at most, no trailing zeros.
+fn modifier_amount_1_8_9(value: f64) -> String {
+    let text = format!("{value:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text.is_empty() || text == "-0" {
+        "0".to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// `ItemStack.addAttributeTooltips`: slot groups, colors and optional player
@@ -1679,6 +1723,71 @@ mod tests {
                 "{item}"
             );
         }
+    }
+
+    #[test]
+    fn one_eight_stack_attribute_nbt_replaces_defaults() {
+        let lang = |key: &str| match key {
+            "attribute.modifier.plus.0" => Some("+%s %s".to_string()),
+            "attribute.modifier.take.0" => Some("-%s %s".to_string()),
+            "attribute.modifier.plus.1" => Some("+%s%% %s".to_string()),
+            "attribute.name.generic.maxHealth" => Some("Max Health".to_string()),
+            "attribute.name.generic.attackDamage" => Some("Attack Damage".to_string()),
+            "attribute.name.generic.movementSpeed" => Some("Speed".to_string()),
+            _ => None,
+        };
+        let entry = |attribute: &str, amount: f64, operation: &str, id: &str| {
+            Tag::compound([
+                ("type", Tag::String(attribute.into())),
+                ("amount", Tag::Double(amount.to_bits())),
+                ("operation", Tag::String(operation.into())),
+                ("id", Tag::String(id.into())),
+            ])
+        };
+        // A diamond sword whose own AttributeModifiers replace its +7: the
+        // tooltip shows only those lines (ItemStack.getAttributes).
+        let mut sword = ItemStack::new("minecraft:diamond_sword", 1);
+        sword.data_mut().other.push((
+            "minecraft:attribute_modifiers".to_owned(),
+            Tag::List(vec![
+                entry(
+                    "minecraft:generic.max_health",
+                    4.0,
+                    "add_value",
+                    "test:health",
+                ),
+                entry(
+                    "minecraft:generic.movement_speed",
+                    -0.1,
+                    "add_multiplied_base",
+                    "test:speed",
+                ),
+            ]),
+        ));
+        assert_eq!(
+            attribute_lines_1_8_9(&sword, &lang),
+            [
+                (String::new(), u32::MAX),
+                ("+4 Max Health".into(), rgba(85, 85, 255, 255)),
+                ("-10% Speed".into(), rgba(255, 85, 85, 255)),
+            ]
+        );
+        // The attack-damage UUID still gets the Sharpness bonus on top.
+        let mut sharp = ItemStack::new("minecraft:diamond_sword", 1);
+        sharp.enchant("minecraft:sharpness", 5);
+        sharp.data_mut().other.push((
+            "minecraft:attribute_modifiers".to_owned(),
+            Tag::List(vec![entry(
+                "minecraft:generic.attack_damage",
+                2.0,
+                "add_value",
+                "minecraft:base_attack_damage",
+            )]),
+        ));
+        assert_eq!(
+            attribute_lines_1_8_9(&sharp, &lang)[1].0,
+            "+8.25 Attack Damage"
+        );
     }
 
     #[test]

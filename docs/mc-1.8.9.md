@@ -510,10 +510,16 @@ A sword or tool installs 1.8's one `generic.attackDamage` modifier (4 plus
 and shovel, none for a hoe), and Sharpness adds 1.25 a level while Smite and
 Bane of Arthropods add 2.5 against their `EntityGroup`, from
 `EnchantmentHelper.getAttackDamage` instead of the 26.3 enchantment data. The
-tooltip shows that block as 1.8 does: an empty line and `+N Attack Damage` in
-blue, with `DecimalFormat("#.###")` and no slot header (`HideFlags` bit 2
-still hides it). Debt: a stack's own `AttributeModifiers` NBT (which 1.8's
-`ItemStack.getAttributes` merges into that line) is not read yet.
+tooltip shows that block as 1.8 does: an empty line and one line per
+`ItemStack.getAttributes` modifier, `+N Attack Damage` in blue (red for a
+negative amount), with `DecimalFormat("#.###")` and no slot header (`HideFlags`
+bit 2 still hides it). A stack's own `AttributeModifiers` NBT (loaded as the
+`minecraft:attribute_modifiers` component) replaces the item's defaults rather
+than extending them, its fixed attack-damage UUID takes the Sharpness bonus,
+and its modifiers apply from every equipped slot, since 1.8 has no slot
+groups; the legacy UUIDs become the datafix's named modifier ids
+(`minecraft:base_attack_damage`), which is also the id the synthesized weapon
+modifier uses.
 Hunger and regeneration already matched 1.8 `FoodStats` byte for byte.
 Air supply is 1.8's `EntityLivingBase` rule: underwater ticks drain one air
 per tick, a water-breathing effect freezes the count, leaving water resets it

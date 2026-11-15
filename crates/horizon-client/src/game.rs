@@ -12379,9 +12379,12 @@ impl Game<'_> {
         for (stack, slot) in equipped {
             let Some(stack) = stack else { continue };
             // 1.8 has no attack-speed attribute: a sword or tool installs one
-            // main-hand attack-damage modifier instead of the 26.3 component.
+            // attack-damage modifier instead of the 26.3 component. A stack's
+            // own `AttributeModifiers` (ItemStack.getAttributes) replaces the
+            // item's defaults.
             let modifiers = if horizon_core::target::is_1_8_9() {
-                horizon_client::combat_1_8_9::attack_modifier(&stack.item)
+                horizon_client::combat_1_8_9::stack_modifiers(stack)
+                    .unwrap_or_else(|| horizon_client::combat_1_8_9::attack_modifier(&stack.item))
             } else {
                 world_items!(self)
                     .get(&stack.item)
