@@ -19,7 +19,6 @@ install:
 
 build_script:
   - 'source "$HOME/.cargo/env" && cargo check -p horizon-client --bins --no-default-features -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features combat_1_8_9 -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features item_tooltip -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib --no-default-features fishing -j 2'
 
 test: off

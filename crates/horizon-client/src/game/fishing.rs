@@ -16,7 +16,7 @@ use horizon_client::{
 use horizon_core::{
     geometry::{Aabb, Vec3, traverse_blocks, trig},
     position::BlockPos,
-    random::RandomSource,
+    random::{LegacyRandom, RandomSource},
 };
 use horizon_protocol::entity_data::{Value, serializer};
 use std::{collections::HashMap, sync::Arc};
@@ -46,6 +46,10 @@ pub(super) struct Hook {
     open_water: bool,
     luck: i32,
     lure: i32,
+    /// `Entity.random`: the hook's own stream, which 1.8 draws the launch
+    /// spread, the movement and bite timers, the loot pick and the XP roll
+    /// from. Only `getResult`'s category roll uses the level's stream.
+    random: LegacyRandom,
     /// The position a server's update put it heading for.
     lerp: HookLerp,
 }
@@ -67,6 +71,16 @@ fn bounds(p: Vec3) -> Aabb {
 /// RandomSource.triangle(mode, deviation).
 fn triangle(r: &mut impl RandomSource, mode: f64, deviation: f64) -> f64 {
     mode + deviation * (f64::from(r.next_float()) - f64::from(r.next_float()))
+}
+/// The stream a hook's draw comes from: `FishingHook` is an `Entity`, so 1.8
+/// gives it its own `random` and never touches the level's. 26.3's port drew
+/// from `world.random`, which the gate keeps for that target.
+fn hook_rng<'a>(hook: &'a mut Hook, world: &'a mut LegacyRandom) -> &'a mut LegacyRandom {
+    if horizon_core::target::is_1_8_9() {
+        &mut hook.random
+    } else {
+        world
+    }
 }
 /// `FishingHook.onHitBlock`: `getDeltaMovement().normalize().scale(hit.distanceTo(this))`,
 /// where `HitResult.distanceTo` is the *squared* distance to the hook: the bobber
@@ -92,7 +106,9 @@ impl Game<'_> {
             return false;
         };
         let at = [p.position.x, p.position.y, p.position.z];
-        let pitch = 0.4 / (self.world.random.next_float() * 0.4 + 0.8);
+        // `FishingRodItem`'s pitch comes from `Item.RANDOM`, a static stream of
+        // its own; the level's random is not touched by casting or reeling.
+        let pitch = 0.4 / (super::dispenser::entity_random().next_float() * 0.4 + 0.8);
         if self.hook.is_some() {
             let damage = self.retrieve_hook(stack);
             self.damage_held(damage);
@@ -129,7 +145,11 @@ impl Game<'_> {
                 f64::from(-y_cos),
             );
             let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
-            let r = &mut self.world.random;
+            // `FishingBobberEntity` is an `Entity`: its constructor's spread
+            // draws from the hook's own random (`new Random()` per entity),
+            // not from the level's stream.
+            let mut random = super::dispenser::entity_random();
+            let r = &mut random;
             v = Vec3::new(
                 v.x * (0.6 / len + triangle(r, 0.5, 0.0103365)),
                 v.y * (0.6 / len + triangle(r, 0.5, 0.0103365)),
@@ -154,6 +174,7 @@ impl Game<'_> {
                 open_water: true,
                 luck,
                 lure,
+                random,
                 lerp: HookLerp::default(),
             });
         }
@@ -162,7 +183,7 @@ impl Game<'_> {
     }
     /// `FishingHook.retrieve`: the rod damage it costs.
     fn retrieve_hook(&mut self, rod: &ItemStack) -> u32 {
-        let Some(hook) = self.hook.take() else {
+        let Some(mut hook) = self.hook.take() else {
             return 0;
         };
         let Some(p) = self.player.as_ref() else {
@@ -202,14 +223,20 @@ impl Game<'_> {
             // `hookedIn instanceof ItemEntity ? 3 : 5`.
             damage = if hooked_item { 3 } else { 5 };
         } else if hook.nibble > 0 {
-            let mut random = self.world.random.clone();
             // 1.8 rolls its own pools: no open-water rule, and Luck of the Sea
             // and Lure shift the junk and treasure thresholds instead.
+            // `FishingHook.getResult` draws the category roll from the level's
+            // stream and the item pick, damage and enchant rolls from the
+            // hook's own `random`.
             let (category, items) = if horizon_core::target::is_1_8_9() {
-                let (category, stack) =
-                    catch_1_8_9(self.res.items(), &mut random, hook.luck, hook.lure);
-                (Some(category), vec![stack])
+                let category =
+                    fishing_category_1_8_9(self.world.random.next_float(), hook.luck, hook.lure);
+                (
+                    Some(category),
+                    vec![catch_1_8_9(self.res.items(), category, &mut hook.random)],
+                )
             } else {
+                let mut random = self.world.random.clone();
                 let biome = self.biome_name_at(hook.position);
                 let Some(loot) = horizon_client::structure_blocks::loot_data(
                     &self.options.resources,
@@ -231,9 +258,9 @@ impl Game<'_> {
                     biome.as_deref(),
                     Some(hook.open_water),
                 );
+                self.world.random = random;
                 (None, items)
             };
-            self.world.random = random;
             if let Some(category) = category {
                 self.stats.custom(
                     ["junk_fished", "treasure_fished", "fish_caught"][category as usize],
@@ -291,7 +318,11 @@ impl Game<'_> {
                     v,
                     0,
                 );
-                let xp = self.world.random.next_int_bound(6).unwrap_or(0) as u32 + 1;
+                // `retract`: the orb's total comes from the hook's own random.
+                let xp = {
+                    let r = hook_rng(&mut hook, &mut self.world.random);
+                    r.next_int_bound(6).unwrap_or(0) as u32 + 1
+                };
                 self.spawn_orbs([owner.x, owner.y + 0.5, owner.z + 0.5], xp);
             }
             // CriteriaTriggers.FISHING_ROD_HOOKED: the hook itself is the entity.
@@ -380,16 +411,21 @@ impl Game<'_> {
         let mut speed = 1;
         let above = [b[0], b[1] + 1, b[2]];
         let sky = self.world.light(above[0], above[1], above[2]) >> 4 == 15;
+        // Both weather rolls are draws from the hook's own stream, in this
+        // order, whether or not the rain test below passes.
+        let (rain, cloud) = {
+            let r = hook_rng(h, &mut self.world.random);
+            (r.next_float(), r.next_float())
+        };
         // Level.isRainingAt: rain (not snow) reaches the position.
-        if self.world.random.next_float() < 0.25
+        if rain < 0.25
             && self.with_level(|b, level, _| {
                 b.is_raining_at(level, BlockPos::new(above[0], above[1], above[2]))
             })
         {
             speed += 1;
         }
-        let r = &mut self.world.random;
-        if r.next_float() < 0.5 && !sky {
+        if cloud < 0.5 && !sky {
             speed -= 1;
         }
         let at = [h.position.x, h.position.y, h.position.z];
@@ -404,7 +440,16 @@ impl Game<'_> {
             if h.time_until_hooked > 0 {
                 // The fish swimming up: a bubble now and then, and a fishing
                 // particle to each side of its path.
-                h.fish_angle += triangle(&mut self.world.random, 0.0, 9.188) as f32;
+                let bump = {
+                    let r = hook_rng(h, &mut self.world.random);
+                    // `fishAngle += random.nextGaussian() * 4.0` in 1.8.
+                    if horizon_core::target::is_1_8_9() {
+                        (r.next_gaussian() * 4.0) as f32
+                    } else {
+                        triangle(r, 0.0, 9.188) as f32
+                    }
+                };
+                h.fish_angle += bump;
                 let angle = h.fish_angle * (std::f64::consts::PI / 180.0) as f32;
                 let (sin, cos) = (trig::sin(f64::from(angle)), trig::cos(f64::from(angle)));
                 let distance = h.time_until_hooked as f32 * 0.1;
@@ -414,7 +459,11 @@ impl Game<'_> {
                     h.position.z + f64::from(cos * distance),
                 ];
                 if self.water_block(fish) {
-                    if self.world.random.next_float() < 0.15 {
+                    let bubble = {
+                        let r = hook_rng(h, &mut self.world.random);
+                        r.next_float() < 0.15
+                    };
+                    if bubble {
                         let spread = [f64::from(sin), 0.1, f64::from(cos)];
                         let at = [fish[0], fish[1] - f64::from(0.1f32), fish[2]];
                         self.send_particles(ParticleType::Bubble, at, spread, 0.0, 1);
@@ -426,8 +475,10 @@ impl Game<'_> {
                     }
                 }
             } else {
-                let pitch =
-                    1.0 + (self.world.random.next_float() - self.world.random.next_float()) * 0.4;
+                let pitch = {
+                    let r = hook_rng(h, &mut self.world.random);
+                    1.0 + (r.next_float() - r.next_float()) * 0.4
+                };
                 self.audio.play(
                     "minecraft:entity.fishing_bobber.splash",
                     Some(at),
@@ -441,7 +492,17 @@ impl Game<'_> {
                 for kind in [ParticleType::Bubble, ParticleType::Fishing] {
                     self.send_particles(kind, at, spread, f64::from(0.2f32), count);
                 }
-                h.nibble = 20 + self.world.random.next_int_bound(21).unwrap_or(0);
+                let nibble = {
+                    let r = hook_rng(h, &mut self.world.random);
+                    // `MathHelper.nextInt(random, 10, 30)` in 1.8; 26.3's is
+                    // `20 + nextInt(21)`.
+                    if horizon_core::target::is_1_8_9() {
+                        10 + r.next_int_bound(21).unwrap_or(0)
+                    } else {
+                        20 + r.next_int_bound(21).unwrap_or(0)
+                    }
+                };
+                h.nibble = nibble;
             }
         } else if h.time_until_lured > 0 {
             h.time_until_lured -= speed;
@@ -453,28 +514,54 @@ impl Game<'_> {
             } else if h.time_until_lured < 60 {
                 tease += (60 - h.time_until_lured) as f32 * 0.01;
             }
-            let r = &mut self.world.random;
-            if r.next_float() < tease {
+            let tease_roll = {
+                let r = hook_rng(h, &mut self.world.random);
+                if r.next_float() < tease {
+                    Some((r.next_float() * 360.0, r.next_float() * 35.0 + 25.0))
+                } else {
+                    None
+                }
+            };
+            if let Some((angle, distance)) = tease_roll {
                 // A splash where a fish is teasing the bait.
-                let angle = (r.next_float() * 360.0) * (std::f64::consts::PI / 180.0) as f32;
-                let distance = r.next_float() * 35.0 + 25.0;
+                let angle = angle * (std::f64::consts::PI / 180.0) as f32;
                 let fish = [
                     h.position.x + f64::from(trig::sin(f64::from(angle)) * distance) * 0.1,
                     f64::from(h.position.y.floor() as f32 + 1.0),
                     h.position.z + f64::from(trig::cos(f64::from(angle)) * distance) * 0.1,
                 ];
                 if self.water_block(fish) {
-                    let count = 2 + self.world.random.next_int_bound(2).unwrap_or(0) as u32;
+                    let count = {
+                        let r = hook_rng(h, &mut self.world.random);
+                        2 + r.next_int_bound(2).unwrap_or(0) as u32
+                    };
                     let spread = [f64::from(0.1f32), 0.0, f64::from(0.1f32)];
                     self.send_particles(ParticleType::Splash, fish, spread, 0.0, count);
                 }
             }
             if h.time_until_lured <= 0 {
-                h.fish_angle = self.world.random.next_float() * 360.0;
-                h.time_until_hooked = 20 + self.world.random.next_int_bound(61).unwrap_or(0);
+                let (angle, hooked) = {
+                    let r = hook_rng(h, &mut self.world.random);
+                    (
+                        r.next_float() * 360.0,
+                        20 + r.next_int_bound(61).unwrap_or(0),
+                    )
+                };
+                h.fish_angle = angle;
+                h.time_until_hooked = hooked;
             }
         } else {
-            h.time_until_lured = 100 + self.world.random.next_int_bound(501).unwrap_or(0) - h.lure;
+            let wait = {
+                let r = hook_rng(h, &mut self.world.random);
+                // `MathHelper.nextInt(random, 100, 900)` in 1.8; 26.3's is
+                // `100 + nextInt(501)`.
+                if horizon_core::target::is_1_8_9() {
+                    100 + r.next_int_bound(801).unwrap_or(0)
+                } else {
+                    100 + r.next_int_bound(501).unwrap_or(0)
+                }
+            };
+            h.time_until_lured = wait - h.lure;
         }
     }
     /// `catchingFish`'s check below a fish: the block under it is water.
@@ -654,8 +741,11 @@ impl Game<'_> {
                 if force.abs() < 0.01 {
                     force += force.signum() * 0.1;
                 }
-                let r = f64::from(self.world.random.next_float());
-                h.velocity = Vec3::new(v.x * 0.9, v.y - force * r * 0.2, v.z * 0.9);
+                let bob = {
+                    let r = hook_rng(&mut h, &mut self.world.random);
+                    f64::from(r.next_float())
+                };
+                h.velocity = Vec3::new(v.x * 0.9, v.y - force * bob * 0.2, v.z * 0.9);
                 if h.nibble <= 0 && h.time_until_hooked <= 0 {
                     h.open_water = true;
                 } else {
@@ -665,8 +755,10 @@ impl Game<'_> {
                 if in_water {
                     h.out_of_water = (h.out_of_water - 1).max(0);
                     if h.nibble > 0 {
-                        let r = &mut self.world.random;
-                        let dip = -0.1 * f64::from(r.next_float()) * f64::from(r.next_float());
+                        let dip = {
+                            let r = hook_rng(&mut h, &mut self.world.random);
+                            -0.1 * f64::from(r.next_float()) * f64::from(r.next_float())
+                        };
                         h.velocity.y += dip;
                     }
                     self.catching_fish(&mut h, b);
@@ -1051,6 +1143,8 @@ impl Hook {
             open_water: true,
             luck: 0,
             lure: 0,
+            // A tracked hook never ticks here, so its stream is unused.
+            random: horizon_core::random::LegacyRandom::new(0),
             lerp: HookLerp::default(),
         }
     }
@@ -1437,14 +1531,15 @@ fn fishing_category_1_8_9(mut roll: f32, luck: i32, lure: i32) -> u8 {
     if roll < treasure { 1 } else { 2 }
 }
 
+/// `FishingHook.getResult`'s item pick once the category is known: the
+/// weighted roll, then the damage and enchant rolls, all from the hook's own
+/// random. `luck` and `lure` only shape the category (`fishing_category_1_8_9`).
 fn catch_1_8_9(
     items: &horizon_items::items::Items,
+    category: u8,
     random: &mut impl RandomSource,
-    luck: i32,
-    lure: i32,
-) -> (u8, horizon_world::loot::LootStack) {
-    let category = fishing_category_1_8_9(random.next_float(), luck, lure);
-    let stack = match category {
+) -> horizon_world::loot::LootStack {
+    match category {
         0 => {
             let (item, _, percent) = pick_weighted(random, JUNK_LOOT_1_8_9, |e| e.1);
             fishing_entry_1_8_9(items, random, item, *percent, false)
@@ -1458,14 +1553,61 @@ fn catch_1_8_9(
             let (item, _) = pick_weighted(random, FISH_LOOT_1_8_9, |e| e.1);
             fishing_entry_1_8_9(items, random, item, 0.0, false)
         }
-    };
-    (category, stack)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::rebound;
     use horizon_core::geometry::Vec3;
+
+    /// `FishingHook` is an `Entity`, so 1.8 gives it a `random` of its own:
+    /// the launch spread, the movement and bite timers, the loot pick and the
+    /// XP roll all draw from it, and the level's stream only advances for
+    /// `getResult`'s category roll. A hook that ticks must leave the level's
+    /// random exactly where it was.
+    #[test]
+    fn one_eight_hook_draws_leave_the_level_stream_alone() {
+        use super::{Hook, HookLerp, State, hook_rng};
+        use horizon_core::random::LegacyRandom;
+        let mut hook = Hook {
+            id: 1,
+            position: Vec3::ZERO,
+            previous: Vec3::ZERO,
+            velocity: Vec3::ZERO,
+            state: State::Flying,
+            life: 0,
+            on_ground: false,
+            nibble: 0,
+            time_until_lured: 0,
+            time_until_hooked: 0,
+            fish_angle: 0.0,
+            out_of_water: 0,
+            open_water: true,
+            luck: 0,
+            lure: 0,
+            random: LegacyRandom::new(1234),
+            lerp: HookLerp::default(),
+        };
+        let mut world = LegacyRandom::new(999);
+        let level_before = world.state();
+        let hook_before = hook.random.state();
+        for _ in 0..4 {
+            let r = hook_rng(&mut hook, &mut world);
+            let _ = r.next_float();
+            let _ = r.next_int_bound(21);
+        }
+        assert_eq!(
+            world.state(),
+            level_before,
+            "casting and fishing must not consume the level's random"
+        );
+        assert_ne!(
+            hook.random.state(),
+            hook_before,
+            "the draws come from the hook's own stream"
+        );
+    }
 
     /// `FishingHook.getResult`: without enchantments junk is 0.00..0.10,
     /// treasure the next 0.05 and fish the rest. Luck of the Sea narrows junk

@@ -615,8 +615,15 @@ treasure, Lure narrows both, and 1.8 has no open-water rule. A junk or
 treasure roll counts `junk_fished`/`treasure_fished`, and a fish counts
 `fish_caught`, as `getResult` increments them. Treasure bows and rods keep
 `WeightedRandomFishingLoot`'s damage range (25% damaged) and enchant at level
-30; a treasure book becomes an enchanted book. Debt: the roll draws from the
-level random where 1.8 draws from the hook entity's own stream.
+30; a treasure book becomes an enchanted book. `FishingHook` is an `Entity`, so
+it owns its `random`: the launch spread, the movement and bite timers, the item
+pick, its damage and enchant rolls and the XP roll draw from it, while the
+level's stream only advances for `getResult`'s category roll, and casting the
+rod no longer consumes it. The hook's own draws use 1.8's ranges: a bite is
+`nextInt(random, 10, 30)`, the wait `nextInt(random, 100, 900)` and the swim
+angle `nextGaussian() * 4.0`. Debt: the tick around those draws is still 26.3's
+state machine (a bobbing state, `0.03` gravity in air, a `nextFloat`-weighted
+dip and 26.3's water sampling), so the bobber's path is not 1.8's yet.
 
 Block drops are 1.8's code, not the 26.3 loot tables. `tools/BlockDropProbe18.java`
 dumps every 1.8 state (7,806 states) and
