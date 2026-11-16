@@ -25,8 +25,9 @@ use horizon_core::random::RandomSource;
 /// librarian, priest, blacksmith and butcher.
 const PROFESSIONS_1_8_9: [u8; 5] = [5, 9, 4, 14, 2];
 
-/// What a 1.8 spawn rides: the two chicken-jockey rolls in
-/// `EntityZombie.onInitialSpawn`'s baby branch.
+/// What a 1.8 spawn does with the mob and the entities its `onInitialSpawn`
+/// brought: the chicken jockey of a baby zombie, and the skeleton jockey of
+/// a spider.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Ride {
     #[default]
@@ -34,10 +35,16 @@ pub enum Ride {
     /// The caller makes a chicken at the mob, finalizes it and mounts the
     /// mob on it.
     New,
-    /// Ride the chicken this finalize created, at this index in `extra`.
+    /// Ride the extra this finalize created, at this index in `extra`.
     Extra(usize),
     /// Ride the first chicken in the 5x3x5 box around the mob.
     Nearby,
+    /// The caller makes a skeleton at the mob, finalizes it and mounts the
+    /// skeleton on the mob (`EntitySpider.onInitialSpawn`).
+    Skeleton,
+    /// The extra at this index rides the mob; `finalize_mob` turns
+    /// [`Ride::Skeleton`] into this once the skeleton exists.
+    Mount(usize),
 }
 
 /// What finalizing a 1.8 mob produced besides the mob itself.
@@ -48,9 +55,10 @@ pub struct Finalized {
     /// or `None` when it stays what it was.
     pub convert: Option<&'static str>,
     /// The entities `onInitialSpawn` spawned with it: the ocelot's two
-    /// kittens, or the chicken a baby zombie jockey rides.
+    /// kittens, the chicken a baby zombie jockey rides, or a spider's
+    /// skeleton jockey.
     pub extra: Vec<Mob>,
-    /// What the mob rides, if anything.
+    /// What the mob rides, or who rides it.
     pub ride: Ride,
 }
 
@@ -161,6 +169,24 @@ pub fn finalize(
                 };
             }
             skeleton(m, d);
+        }
+        // `EntitySpider.onInitialSpawn`: one spider in a hundred brings a
+        // skeleton that rides it, and on hard difficulty a tenth of the
+        // special difficulty brings a long speed, strength, regeneration or
+        // invisibility (the effect id is the level's next draw).
+        S::Spider => {
+            if world_random.next_int_bound(100).unwrap_or(1) == 0 {
+                ride = Ride::Skeleton;
+            }
+            if d.hard && world_random.next_float() < 0.1 * d.special() {
+                let effect = match world_random.next_int_bound(5).unwrap_or(0) {
+                    0 | 1 => "minecraft:speed",
+                    2 => "minecraft:strength",
+                    3 => "minecraft:regeneration",
+                    _ => "minecraft:invisibility",
+                };
+                m.extra.effects.push((effect, i32::MAX, 0));
+            }
         }
         S::WitherSkeleton => {
             m.extra.set_main_hand(Some("minecraft:stone_sword".into()));
@@ -431,6 +457,58 @@ mod tests {
             horizon_core::geometry::Vec3::new(4.5, 64.0, -2.5),
             37.5,
         )
+    }
+
+    fn spider() -> Mob {
+        let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+        kind.species = Species::Spider;
+        Mob::new(
+            0,
+            std::sync::Arc::new(kind),
+            horizon_core::geometry::Vec3::new(4.5, 64.0, -2.5),
+            37.5,
+        )
+    }
+
+    /// `EntitySpider.onInitialSpawn`: the skeleton jockey roll is the
+    /// level's first draw, then on hard difficulty the effect gate and the
+    /// five-way effect id.
+    #[test]
+    fn one_eight_spider_rolls_its_skeleton_and_hard_effect() {
+        use horizon_core::random::LegacyRandom;
+        let hard = LocalDifficulty::new(3, 1_512_000, 4_000_000, 0.0);
+        assert!(hard.hard);
+        assert_eq!(hard.special(), 1.0);
+        // 1683: nextInt(100) == 0, then 0.0553 -> a spider jockey and speed.
+        let mut random = LegacyRandom::new(1683);
+        let mut m = spider();
+        let out = finalize(&mut m, &mut random, &hard, false);
+        assert_eq!(out.ride, Ride::Skeleton);
+        assert_eq!(m.extra.effects, [("minecraft:speed", i32::MAX, 0)]);
+        assert!((random.next_float() - 0.928_908).abs() < 1.0e-5);
+        // 63: no jockey, 0.0953 -> invisibility (the fourth id).
+        let mut random = LegacyRandom::new(63);
+        let mut m = spider();
+        let out = finalize(&mut m, &mut random, &hard, false);
+        assert_eq!(out.ride, Ride::None);
+        assert_eq!(m.extra.effects, [("minecraft:invisibility", i32::MAX, 0)]);
+        assert!((random.next_float() - 0.235_899).abs() < 1.0e-5);
+        // 300000: no jockey, no effect.
+        let mut random = LegacyRandom::new(300_000);
+        let mut m = spider();
+        let out = finalize(&mut m, &mut random, &hard, false);
+        assert_eq!(out.ride, Ride::None);
+        assert!(m.extra.effects.is_empty());
+        assert!((random.next_float() - 0.173_283).abs() < 1.0e-5);
+        // Outside hard difficulty the effect gate is never drawn: 12's next
+        // level draw is the float the gate would have read.
+        let normal = LocalDifficulty::new(2, 1_512_000, 4_000_000, 0.0);
+        let mut random = LegacyRandom::new(12);
+        let mut m = spider();
+        let out = finalize(&mut m, &mut random, &normal, false);
+        assert_eq!(out.ride, Ride::None);
+        assert!(m.extra.effects.is_empty());
+        assert!((random.next_float() - 0.059_828).abs() < 1.0e-5);
     }
 
     /// `EntityOcelot.onInitialSpawn`: one spawn in seven comes with two

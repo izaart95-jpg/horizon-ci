@@ -423,7 +423,8 @@ impl Game<'_> {
                 self.native_mobs_joined(self.mobs.len() - 1, false);
             }
             let vehicle = match out.ride {
-                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => extra_ids.get(k).copied(),
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k)
+                | horizon_client::mobs::finalize_1_8_9::Ride::Mount(k) => extra_ids.get(k).copied(),
                 _ => None,
             };
             self.apply_ride(id, out.ride, vehicle);

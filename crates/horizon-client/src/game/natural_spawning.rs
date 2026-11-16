@@ -216,6 +216,7 @@ impl GameLevel<'_, '_> {
         let base = extra.len();
         let ride = match out.ride {
             Ride::Extra(k) => Ride::Extra(base + k),
+            Ride::Mount(k) => Ride::Mount(base + k),
             other => other,
         };
         extra.extend(out.extra);
@@ -809,6 +810,18 @@ impl<'a> Game<'a> {
                     ride = Ride::Extra(extra.len() - 1);
                 }
             }
+            // `EntitySpider.onInitialSpawn`: one spider in a hundred brings
+            // a skeleton at its position and facing, finalized and spawned
+            // with it, that then rides it.
+            if ride == Ride::Skeleton {
+                ride = Ride::None;
+                if let Some(kind) = self.res.mob_types().get("minecraft:skeleton").cloned() {
+                    let mut skeleton = Mob::new(0, kind, mob.position, mob.yaw);
+                    let _ = self.finalize_mob(&mut skeleton, world_random);
+                    extra.push(skeleton);
+                    ride = Ride::Mount(extra.len() - 1);
+                }
+            }
             return FinalizedSpawn { extra, ride };
         }
         let facts = self.biome_facts(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
@@ -818,10 +831,11 @@ impl<'a> Game<'a> {
             ride: Ride::None,
         }
     }
-    /// Applies a 1.8 finalize's ride. `vehicle` is the id of the entity a
-    /// `Ride::Extra` named (the caller added it); `Ride::Nearby` takes the
-    /// first chicken in the 5x3x5 box, as `EntityZombie.onInitialSpawn`
-    /// does. The chicken becomes a jockey (`setChickenJockey`).
+    /// Applies a 1.8 finalize's seat. `vehicle` is the id of the entity a
+    /// `Ride::Extra` named (or, for a `Ride::Mount`, the rider that rides
+    /// this mob; the caller added it); `Ride::Nearby` takes the first
+    /// chicken in the 5x3x5 box, as `EntityZombie.onInitialSpawn` does. The
+    /// chicken becomes a jockey (`setChickenJockey`).
     pub(super) fn apply_ride(
         &mut self,
         rider: u32,
@@ -830,8 +844,8 @@ impl<'a> Game<'a> {
     ) {
         use horizon_client::mobs::finalize_1_8_9::Ride;
         let vehicle = match ride {
-            Ride::None | Ride::New => return,
-            Ride::Extra(_) => vehicle,
+            Ride::None | Ride::New | Ride::Skeleton => return,
+            Ride::Extra(_) | Ride::Mount(_) => vehicle,
             Ride::Nearby => {
                 let Some(area) = self
                     .mobs
@@ -852,6 +866,11 @@ impl<'a> Game<'a> {
             }
         };
         let Some(vehicle) = vehicle else { return };
+        if let Ride::Mount(_) = ride {
+            // A spider's skeleton rides the spider.
+            self.mount_mob(vehicle, rider);
+            return;
+        }
         if let Some(chicken) = self.mobs.iter_mut().find(|m| m.id == vehicle) {
             chicken.extra.jockey = true;
         }
@@ -901,6 +920,7 @@ impl<'a> Game<'a> {
                 self.spawn_jockeys(id, true);
             }
         }
+        ids
     }
     /// Every player in the level in place: the local player, and the LAN
     /// guests or server players in it.
@@ -1080,7 +1100,8 @@ impl<'a> Game<'a> {
         let ids = self.add_spawned(pending, false);
         for (base, ride) in rides {
             let vehicle = match ride {
-                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => {
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k)
+                | horizon_client::mobs::finalize_1_8_9::Ride::Mount(k) => {
                     ids.get(base + 1 + k).copied()
                 }
                 _ => None,
@@ -1318,7 +1339,8 @@ impl<'a> Game<'a> {
         let ids = self.add_spawned(pending, false);
         for (base, ride) in rides {
             let vehicle = match ride {
-                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => {
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k)
+                | horizon_client::mobs::finalize_1_8_9::Ride::Mount(k) => {
                     ids.get(base + 1 + k).copied()
                 }
                 _ => None,

@@ -793,10 +793,14 @@ jockey: the first chicken within 5×3×5, else a new one), villager zombie, door
 breaking, armour, pumpkin and `handleAttributes` bonuses (knockback
 resistance, follow range, the leader's reinforcements and health), and the
 skeleton's armour and bow or, four times in five in the nether, a wither
-skeleton with a stone sword and four attack damage, and the ocelot's
-one-in-seven pair of kittens, babies at the parent's position and facing.
-Sheep colour, villager profession, the ocelot's kittens, a baby zombie's
-chicken jockey and the spider's jockey draw on `World.random`, as in 1.8.
+skeleton with a stone sword and four attack damage, the ocelot's
+one-in-seven pair of kittens, babies at the parent's position and facing,
+and the spider's one-in-a-hundred skeleton jockey (a skeleton at its
+position and facing, finalized and mounted on it) plus, on hard difficulty
+and with a tenth chance times the special difficulty, one of four long
+effects (speed, strength, regeneration or invisibility). Sheep colour,
+villager profession, the ocelot's kittens, a baby zombie's chicken jockey,
+the spider's jockey roll and its effect draw on `World.random`, as in 1.8.
 The spawn gear is 1.8's too: `setEquipmentBasedOnDifficulty` gives the armour
 set, then `setEnchantmentBasedOnDifficulty` enchants the main hand and the
 feet, legs, chest and head from the mob's own random. The selection is

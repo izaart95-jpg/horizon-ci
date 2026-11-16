@@ -321,7 +321,11 @@ impl Game<'_> {
                 }
             }
             // Spider.finalizeSpawn: one in a hundred carries a skeleton.
-            Species::Spider if self.world.random.next_int_bound(100).unwrap_or(1) == 0 => {
+            // 1.8's `EntitySpider.onInitialSpawn` rolls it itself.
+            Species::Spider
+                if !horizon_core::target::is_1_8_9()
+                    && self.world.random.next_int_bound(100).unwrap_or(1) == 0 =>
+            {
                 if let Some(skeleton) = self.spawn_mob("minecraft:skeleton", at, false) {
                     self.mount_mob(skeleton, id);
                 }
