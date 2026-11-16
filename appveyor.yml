@@ -18,13 +18,7 @@ install:
   - sudo apt-get install -y -qq libasound2-dev libudev-dev pkg-config
 
 build_script:
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-items --lib enchant -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins finalize -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib finalize_1_8_9 -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins exploration -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib stations -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::fishing -j 2'
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-world --lib worldgen::structure::start -j 2'
-  - 'source "$HOME/.cargo/env" && cargo check -p horizon-client --example client_probe -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-items --lib legacy_1_8_9 -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::creatures::tests -j 2'
 
 test: off

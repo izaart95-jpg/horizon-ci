@@ -5860,20 +5860,38 @@ impl Game<'_> {
             hit.pos[1] + hit.face[1],
             hit.pos[2] + hit.face[2],
         ];
-        let at = [
-            f64::from(p[0]) + 0.5,
-            f64::from(p[1]),
-            f64::from(p[2]) + 0.5,
-        ];
+        // 1.8 `ItemMonsterPlacer.onItemUse` raises the spawn by half a block
+        // when the clicked face is the top of a slab (`d0`); 26.3 places it
+        // on the face itself.
+        let mut y = f64::from(p[1]);
+        if horizon_core::target::is_1_8_9() && hit.face == [0, 1, 0] {
+            let clicked = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
+            if self.res.facts().get(clicked).name.ends_with("_slab") {
+                y += 0.5;
+            }
+        }
+        let at = [f64::from(p[0]) + 0.5, y, f64::from(p[2]) + 0.5];
         let Some(id) = self.spawn_mob_spawned(&kind, at) else {
             return Ok(false);
         };
-        // SpawnEggItem.spawnMob: `EntityType.create` finalizes the mob, then
-        // `PostSpawnProcessor` puts the egg's components on it.
-        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
-            horizon_client::entity_nbt::apply_item_components(m, stack);
+        if horizon_core::target::is_1_8_9() {
+            // `stack.hasDisplayName()`: `setCustomNameTag(getDisplayName())`.
+            // A 1.8 egg has no `entity_data`/`bucket_entity_data` component,
+            // so the display name is all it carries.
+            if let Some(name) = stack.custom_name()
+                && let Some(m) = self.mobs.iter_mut().find(|m| m.id == id)
+            {
+                m.custom_name_text = Some(Text::literal(&name));
+                m.custom_name = Some(name);
+            }
+        } else {
+            // SpawnEggItem.spawnMob: `EntityType.create` finalizes the mob,
+            // then `PostSpawnProcessor` puts the egg's components on it.
+            if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
+                horizon_client::entity_nbt::apply_item_components(m, stack);
+            }
+            self.apply_spawn_egg_entity_data(id, stack);
         }
-        self.apply_spawn_egg_entity_data(id, stack);
         self.swing_arm();
         if !self.creative
             && let Some(s) = self.held_mut().as_mut()

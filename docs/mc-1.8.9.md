@@ -581,9 +581,13 @@ one (`tile.stone.stone.name` is present), so a 26.3 root keeps its own names.
 Spawn eggs are 1.8's item 383 with the entity's network id in `Damage`
 (`Creeper` 50, `Pig` 90, `Villager` 120); `legacy_id`/`legacy_stack` map the
 current egg names by that id, the datafixer's `ItemSpawnEggFix` turns the damage
-into `EntityTag.id`, and 1.9's shulker (69) is not a 1.8 egg. Debt: a 1.8 egg
-carries no entity data beyond the mob type, so a current egg's `entity_data`
-component is not written back.
+into `EntityTag.id`, and 1.9's shulker (69) is not a 1.8 egg. 1.8's
+`ItemMonsterPlacer` ignores `EntityTag`: using an egg spawns the mob through
+`onInitialSpawn` with `world.rand.nextFloat() * 360` yaw, half a block higher
+when the top of a slab was clicked, and copies only the egg's display name to
+the mob's `CustomName`. The 1.8 target does that and drops a current egg's
+`entity_data` component when encoding a slot, and its egg use skips the 26.3
+component application.
 
 Potion damage is 1.8's bitmask, not a potion name: bits 0–3 select the
 effects, bit 4 is the awkward marker, bit 5 glowstone (level II), bit 6

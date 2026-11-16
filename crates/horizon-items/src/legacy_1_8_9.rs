@@ -589,6 +589,29 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_spawn_egg_keeps_its_name_and_drops_entity_data() {
+        // `ItemMonsterPlacer` copies `stack.getDisplayName()` to the mob's
+        // `CustomName`; the display name is the item's `display.Name` NBT.
+        let mut egg = ItemStack::new("minecraft:zombie_spawn_egg", 1);
+        egg.data_mut().custom_name = Some(Tag::String("Bob".into()));
+        let (id, count, damage, tag) = legacy(egg);
+        assert_eq!((id, count, damage), (383, 1, 54));
+        assert_eq!(
+            tag.get("display").and_then(|d| d.get("Name")),
+            Some(&Tag::String("Bob".into()))
+        );
+        let back = stack(383, 1, 54, &tag).expect("renamed egg");
+        assert_eq!(back.custom_name().as_deref(), Some("Bob"));
+        // 1.8's egg has no `EntityTag` field: the class never reads one, so a
+        // current `entity_data` component has nowhere to go.
+        let mut custom = ItemStack::new("minecraft:zombie_spawn_egg", 1);
+        custom
+            .data_mut()
+            .set_other("minecraft:entity_data", Some(nbt([("NoAI", Tag::Byte(1))])));
+        assert_eq!(legacy(custom), (383, 1, 54, Tag::End));
+    }
+
+    #[test]
     fn empty_slots_decode_to_nothing() {
         assert_eq!(stack(-1, 0, 0, &Tag::End), None);
         assert_eq!(stack(1, 0, 0, &Tag::End), None);
