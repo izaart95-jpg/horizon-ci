@@ -87,9 +87,8 @@
 >   the lists are 1.8's, not because 26.3's were filtered.
 >   Debt: which biome a column has still comes from the 26.3 generator, a
 >   chunk's decoration random stream is still 26.3's (so the packs the
->   generator places afterwards cannot be seed-identical yet), packed mobs are
->   finalized by 26.3's `finalize_mob` instead of 1.8's `EntityData` sharing and
->   `initialize`, and 1.8 village generation is unported; the dedicated
+>   generator places afterwards cannot be seed-identical yet), and 1.8
+>   village generation is unported; the dedicated
 >   server's `spawn-animals`/`spawn-monsters` settings are not modelled (single
 >   player uses difficulty for animals and always allows monsters).
 - **Some 1.8 screens are still 26.3 layouts.** The title screen, options,
@@ -772,7 +771,11 @@ from the biome at the chunk's far corner `(cx*16+16, 0, cz*16+16)`, then
 by `tools/BlockMaterialProbe18.java`), not 26.3 opacity — glass, snow layers,
 carpets, skulls and flower pots block movement, water and plants do not, and
 leaves block but are skipped as foliage. Packs exist only in the overworld;
-the nether, End, flat and debug generators place none. Debt: the 26.3 generator
+the nether, End, flat and debug generators place none. The 26.3-only
+structures are dropped before the registry is built, and the sets they leave
+empty with them, so a 1.8 world generates the mineshaft, village, stronghold,
+desert and jungle temples, swamp hut, igloo, ocean monument and nether
+fortress only. Debt: the 26.3 generator
 still decides which biome a column has (the 1.8 list is selected by that biome
 name), its decoration random stream is not 1.8's yet, so the draws before the
 pack (and the pack itself) cannot be seed-identical, 1.8 village

@@ -291,6 +291,36 @@ fn pair(value: Option<&Value>, a: &str, b: &str, default: i32, missing_b: i32) -
     }
 }
 
+/// Structures a 1.8.9 world never generates. The world's data is still the
+/// 26.3 bundle, so a 1.8 build drops their definitions and the structure sets
+/// they leave empty: 1.8 has no abandoned camps, ancient cities, bastions,
+/// buried treasure, end cities, woodland mansions, nether fossils, ocean
+/// ruins, pillager outposts, ruined portals, shipwrecks, trail ruins or trial
+/// chambers. Villages stay on the 26.3 jigsaw pieces until 1.8's own village
+/// generation is ported.
+const NOT_IN_1_8_9: &[&str] = &[
+    "abandoned_camp_",
+    "ancient_city",
+    "bastion_remnant",
+    "buried_treasure",
+    "end_city",
+    "mansion",
+    "nether_fossil",
+    "ocean_ruin",
+    "pillager_outpost",
+    "ruined_portal",
+    "shipwreck",
+    "trail_ruins",
+    "trial_chambers",
+];
+
+/// Whether the 1.8 target's world generates the structure `name` (a
+/// `worldgen/structure` file stem). A 26.3 build generates everything.
+fn generated_in_1_8_9(name: &str) -> bool {
+    !horizon_core::target::is_1_8_9()
+        || !NOT_IN_1_8_9.iter().any(|skipped| name.starts_with(skipped))
+}
+
 /// All structures and structure sets of a resource bundle, in registry
 /// (identifier) order.
 #[derive(Debug)]
@@ -308,6 +338,9 @@ impl StructureRegistry {
     ) -> Result<Self, DecodeError> {
         let mut defs = Vec::new();
         for (name, json) in structures {
+            if !generated_in_1_8_9(name) {
+                continue;
+            }
             let v: Value = serde_json::from_str(json)?;
             let draws = match v["type"].as_str() {
                 Some("yungsapi:yung_jigsaw") => super::jigsaw::Draws::Yung,
@@ -415,19 +448,26 @@ impl StructureRegistry {
                 },
                 _ => Placement::Unsupported,
             };
+            let structures: Vec<(usize, i32)> = v["structures"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| {
+                    Some((
+                        index(e["structure"].as_str()?)?,
+                        e["weight"].as_i64().unwrap_or(1) as i32,
+                    ))
+                })
+                .collect();
+            // A 1.8 world drops the sets whose every structure it never had
+            // (the ocean ruins, shipwrecks, ruined portals, ...). An empty set
+            // is never picked and names no structure to locate.
+            if structures.is_empty() && horizon_core::target::is_1_8_9() {
+                continue;
+            }
             out.push(StructureSet {
                 name: name.clone(),
-                structures: v["structures"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|e| {
-                        Some((
-                            index(e["structure"].as_str()?)?,
-                            e["weight"].as_i64().unwrap_or(1) as i32,
-                        ))
-                    })
-                    .collect(),
+                structures,
                 placement,
                 salt: p["salt"].as_i64().unwrap_or(0) as i32,
                 frequency: p["frequency"].as_f64().unwrap_or(1.) as f32,
@@ -1575,5 +1615,76 @@ mod tests {
         assert!(avoid.near(ChunkPos::new(1, -1), |q| {
             BiomeId(if q == [18, 30, 10] { 2 } else { 0 })
         }));
+    }
+
+    /// The 1.8 world generates only the structures 1.8 had. A 26.3 bundle's
+    /// extra definitions are dropped, a set left empty disappears, and a set
+    /// that still holds one survivor keeps only it.
+    #[test]
+    fn one_eight_keeps_only_the_structures_it_had() {
+        let spread = || {
+            json!({"type": "minecraft:random_spread", "spacing": 32,
+                "separation": 8, "salt": 1})
+        };
+        let only = |name: &str| {
+            json!({"structures": [{"structure": name, "weight": 1}],
+                "placement": spread()})
+        };
+        let jigsaw = json!({
+            "type": "minecraft:jigsaw", "biomes": [], "start_pool": "t:pool",
+            "size": 1, "start_height": {"absolute": 0},
+        });
+        let r = registry(
+            &[
+                ("village_plains", jigsaw.clone()),
+                (
+                    "mansion",
+                    json!({"type": "minecraft:woodland_mansion", "biomes": []}),
+                ),
+                (
+                    "monument",
+                    json!({"type": "minecraft:ocean_monument", "biomes": []}),
+                ),
+                ("trial_chambers", jigsaw),
+                (
+                    "fortress",
+                    json!({"type": "minecraft:fortress", "biomes": []}),
+                ),
+                (
+                    "abandoned_camp_forest",
+                    json!({"type": "yungsapi:yung_jigsaw", "biomes": []}),
+                ),
+            ],
+            &[
+                ("villages", only("village_plains")),
+                ("woodland_mansions", only("mansion")),
+                ("ocean_monuments", only("monument")),
+                ("trial_chambers", only("trial_chambers")),
+                (
+                    "nether_complexes",
+                    json!({"structures": [
+                        {"structure": "fortress", "weight": 2},
+                        {"structure": "abandoned_camp_forest", "weight": 1},
+                    ], "placement": spread()}),
+                ),
+            ],
+        );
+        let kept: Vec<&str> = r.structures.iter().map(|s| s.name.as_str()).collect();
+        if horizon_core::target::is_1_8_9() {
+            assert_eq!(kept, ["village_plains", "monument", "fortress"]);
+            let sets: Vec<&str> = r.sets.iter().map(|s| s.name.as_str()).collect();
+            assert_eq!(sets, ["villages", "ocean_monuments", "nether_complexes"]);
+            // The nether set keeps its fortress and lost the bastion's camp.
+            let nether = r
+                .sets
+                .iter()
+                .find(|s| s.name == "nether_complexes")
+                .unwrap();
+            let fortress = kept.iter().position(|n| *n == "fortress").unwrap();
+            assert_eq!(nether.structures, [(fortress, 2)]);
+        } else {
+            assert_eq!(kept.len(), 6);
+            assert_eq!(r.sets.len(), 5);
+        }
     }
 }
