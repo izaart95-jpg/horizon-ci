@@ -858,7 +858,12 @@ before the action is sent.
 
 The enchanting table draws from 1.8's own 25-entry `enchantmentsList`, not the
 26.3 `#minecraft:in_enchanting_table` tag (which adds Mending, Frost Walker and
-the other post-1.8 enchantments). 1.8's `en_US.lang` keys the enchantments by
+the other post-1.8 enchantments). The three offers use 1.8's
+`EnchantmentHelper.a(random, slot, bookshelves, stack)` cost formula, and a
+click re-seeds `xpSeed + slot` and applies every entry
+`EnchantmentHelper.buildEnchantmentList` returns (a book drops one random entry
+from a list of two or more); the shown clue is one random entry of that same
+list. 1.8's `en_US.lang` keys the enchantments by
 legacy names (`enchantment.damage.all`), so the current description keys come
 from an English fallback list (`ENCHANTMENT_NAMES`); a non-English player still
 sees English enchantment names until `horizon-prepare` emits the mapping.

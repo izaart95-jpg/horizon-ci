@@ -747,7 +747,11 @@ impl<'a> Game<'a> {
     /// reads the level's random (a sheep's fleece colour and a villager's
     /// profession), can turn the mob into another species, and can spawn
     /// entities with it (the ocelot's kittens), which are returned.
-    fn finalize_mob(&self, mob: &mut Mob, world_random: &mut impl RandomSource) -> Vec<Mob> {
+    pub(super) fn finalize_mob(
+        &self,
+        mob: &mut Mob,
+        world_random: &mut impl RandomSource,
+    ) -> Vec<Mob> {
         let p = mob.position;
         let difficulty = self.local_difficulty([p.x, p.y, p.z]);
         if horizon_core::target::is_1_8_9() {

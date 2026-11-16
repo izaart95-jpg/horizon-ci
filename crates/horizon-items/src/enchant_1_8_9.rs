@@ -75,10 +75,7 @@ fn weighted<R: RandomSource>(
     candidates: &BTreeMap<usize, u32>,
     order: &[usize],
 ) -> Option<usize> {
-    let total: i32 = order
-        .iter()
-        .map(|&i| ENCHANTMENTS[i].weight as i32)
-        .sum();
+    let total: i32 = order.iter().map(|&i| ENCHANTMENTS[i].weight as i32).sum();
     if total <= 0 {
         return None;
     }

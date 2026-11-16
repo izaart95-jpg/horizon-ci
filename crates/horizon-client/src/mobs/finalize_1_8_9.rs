@@ -307,7 +307,8 @@ fn enchant_equipment(m: &mut Mob, d: &LocalDifficulty) {
     if m.extra.main_hand.is_some() && random.next_float() < 0.25 * special {
         let level = (5.0 + special * random.next_int_bound(18).unwrap_or(0) as f32) as i32;
         let item = m.extra.main_hand.clone().expect("checked above");
-        for (enchantment, level) in horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
+        for (enchantment, level) in
+            horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
         {
             gear::upgrade(m, gear::MAIN, &enchantment, level);
         }
@@ -325,7 +326,8 @@ fn enchant_equipment(m: &mut Mob, d: &LocalDifficulty) {
             continue;
         }
         let level = (5.0 + special * random.next_int_bound(18).unwrap_or(0) as f32) as i32;
-        for (enchantment, level) in horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
+        for (enchantment, level) in
+            horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
         {
             gear::upgrade(m, slot, &enchantment, level);
         }

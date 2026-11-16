@@ -60,6 +60,23 @@ pub struct EnchantOffers {
     /// Shown clue: enchantment and level (`enchantClue` / `levelClue`).
     pub clues: [Option<(Arc<str>, u32)>; 3],
 }
+/// One roll of `EnchantmentMenu.getEnchantmentList`'s list: 1.8's
+/// `EnchantmentHelper.buildEnchantmentList` with the 1.8 tables and type gate,
+/// or 26.3's data-driven selection.
+fn list_with(
+    e: &Enchantments,
+    items: &Items,
+    random: &mut LegacyRandom,
+    item: &str,
+    cost: i32,
+) -> Levels {
+    if horizon_core::target::is_1_8_9() {
+        horizon_items::enchant_1_8_9::add_random(random, item, cost)
+    } else {
+        let pool = e.enchanting_table_pool();
+        e.select(items, random, item, cost, &pool)
+    }
+}
 /// `EnchantmentMenu.getEnchantmentList`.
 pub fn enchantment_list(
     e: &Enchantments,
@@ -70,8 +87,7 @@ pub fn enchantment_list(
     item: &str,
 ) -> Levels {
     let mut random = LegacyRandom::new(i64::from(seed.wrapping_add(slot as i32)));
-    let pool = e.enchanting_table_pool();
-    let mut list = e.select(items, &mut random, item, cost, &pool);
+    let mut list = list_with(e, items, &mut random, item, cost);
     if item == "minecraft:book" && list.len() > 1 {
         let i = random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
         list.remove(i);
@@ -103,8 +119,7 @@ pub fn enchant_offers(
         if offers.costs[i] > 0 {
             // getEnchantmentList reseeds the menu random; the clue draws continue from it.
             let mut list_random = LegacyRandom::new(i64::from(seed.wrapping_add(i as i32)));
-            let pool = e.enchanting_table_pool();
-            let mut list = e.select(items, &mut list_random, &stack.item, offers.costs[i], &pool);
+            let mut list = list_with(e, items, &mut list_random, &stack.item, offers.costs[i]);
             if &*stack.item == "minecraft:book" && list.len() > 1 {
                 let r = list_random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
                 list.remove(r);

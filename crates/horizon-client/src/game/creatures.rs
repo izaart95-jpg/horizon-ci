@@ -393,13 +393,12 @@ impl Game<'_> {
         let yaw = self.world.random.next_float() * 360.0;
         let mut mob = Mob::new(self.next_entity, t, Vec3::new(at[0], at[1], at[2]), yaw);
         mob.persistent = persistent;
-        let facts = self.biome_facts(
-            at[0].floor() as i32,
-            at[1].floor() as i32,
-            at[2].floor() as i32,
-        );
-        let difficulty = self.local_difficulty(at);
-        spawning::finalize(&mut mob, &facts, &difficulty);
+        // 1.8's `onInitialSpawn` reads the level's random (sheep colour,
+        // villager profession, the ocelot's kittens); the 26.3 finalize only
+        // needs the biome facts, which the same call takes.
+        let mut random = self.world.random.clone();
+        let extra = self.finalize_mob(&mut mob, &mut random);
+        self.world.random = random;
         if !scripted {
             let reason = if persistent {
                 horizon_client::mobs::raider::Reason::Other
@@ -411,8 +410,19 @@ impl Game<'_> {
         let id = mob.id;
         self.mobs.push(mob);
         self.native_mobs_joined(self.mobs.len() - 1, false);
-        self.enchant_spawn_equipment(id);
-        self.halloween_spawn_head(id);
+        // 1.8's finalize already enchanted the gear and rolled the pumpkin,
+        // and may have spawned the ocelot's kittens with the parent.
+        if horizon_core::target::is_1_8_9() {
+            for mut kitten in extra {
+                self.next_entity += 1;
+                kitten.id = self.next_entity;
+                self.mobs.push(kitten);
+                self.native_mobs_joined(self.mobs.len() - 1, false);
+            }
+        } else {
+            self.enchant_spawn_equipment(id);
+            self.halloween_spawn_head(id);
+        }
         if !persistent && !scripted {
             self.spawn_jockeys(id, true);
         }
