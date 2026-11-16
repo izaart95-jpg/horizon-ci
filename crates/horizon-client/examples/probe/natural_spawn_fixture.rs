@@ -923,7 +923,7 @@ fn spawner_case(
     for tick in 0..ticks {
         let mut events = Vec::new();
         let mut spawned = std::collections::VecDeque::new();
-        let mut spawn = |l: &World, r: &SpawnerSpawn| -> Option<SpawnerAdded> {
+        let mut spawn = |l: &World, r: &SpawnerSpawn, _random: &mut _| -> Option<SpawnerAdded> {
             let t = l.s.types.types.get(r.id)?;
             let [x, y, z] = r.position;
             let bounds = spawn_box(x, y, z, t.width as f32, t.height as f32);

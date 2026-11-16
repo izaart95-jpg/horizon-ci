@@ -9,7 +9,6 @@ use horizon_client::{
     mobs::{
         Mob, Who,
         spawner::{SpawnDataExt, Spawner, SpawnerAdded, SpawnerEvent, SpawnerExt, SpawnerSpawn},
-        spawning,
         trial_spawner::{TrialSpawnerExt, TrialState},
     },
     particles::{ParticleOptions, ParticleType},
@@ -22,8 +21,10 @@ type Pos = (i32, i32, i32);
 
 /// What a spawner tick decided to add, created once the level is free.
 pub(super) enum Planned {
-    /// `finalizeSpawn` ran on a fresh mob; the spawn data's `equipment`.
-    Finalized(Mob, Option<Tag>),
+    /// `finalizeSpawn` ran on a fresh mob; the entities `onInitialSpawn`
+    /// spawned with it (the ocelot's kittens), and the spawn data's
+    /// `equipment`.
+    Finalized(Mob, Vec<Mob>, Option<Tag>),
     /// A mob loaded from the spawn data (with its passengers) and its
     /// `equipment`.
     Loaded(Tag, Option<Tag>),
@@ -124,9 +125,12 @@ impl Game<'_> {
         let mut planned: Vec<Planned> = Vec::new();
         {
             let level = self.natural_level();
-            let mut spawn = |l: &super::natural_spawning::GameLevel, r: &SpawnerSpawn| {
-                l.game.plan_spawner_mob(l, r, &mut planned)
-            };
+            let mut spawn =
+                |l: &super::natural_spawning::GameLevel,
+                 r: &SpawnerSpawn,
+                 random: &mut horizon_core::random::LegacyRandom| {
+                    l.game.plan_spawner_mob(l, r, &mut planned, Some(random))
+                };
             spawner.server_tick(&level, &mut random, pos, &mut spawn, &mut events);
         }
         self.world.random = random;
@@ -140,14 +144,26 @@ impl Game<'_> {
         for (i, plan) in planned.into_iter().enumerate() {
             let provisional = u32::MAX - i as u32;
             let id = match plan {
-                Planned::Finalized(mut mob, equipment) => {
+                Planned::Finalized(mut mob, extra, equipment) => {
                     self.next_entity += 1;
                     mob.id = self.next_entity;
                     let id = mob.id;
                     self.mobs.push(mob);
                     self.native_mobs_joined(self.mobs.len() - 1, false);
-                    self.enchant_spawn_equipment(id);
-                    self.halloween_spawn_head(id);
+                    if horizon_core::target::is_1_8_9() {
+                        // `onInitialSpawn` already enchanted the gear and
+                        // rolled the pumpkin, and may have spawned the
+                        // ocelot's kittens with the parent.
+                        for mut kitten in extra {
+                            self.next_entity += 1;
+                            kitten.id = self.next_entity;
+                            self.mobs.push(kitten);
+                            self.native_mobs_joined(self.mobs.len() - 1, false);
+                        }
+                    } else {
+                        self.enchant_spawn_equipment(id);
+                        self.halloween_spawn_head(id);
+                    }
                     self.spawn_jockeys(id, true);
                     Some((id, equipment))
                 }
@@ -172,32 +188,37 @@ impl Game<'_> {
         l: &super::natural_spawning::GameLevel,
         r: &SpawnerSpawn,
         planned: &mut Vec<Planned>,
+        world_random: Option<&mut horizon_core::random::LegacyRandom>,
     ) -> Option<SpawnerAdded> {
         let kind = self.res.mob_types().get(r.id)?.clone();
         let [x, y, z] = r.position;
         let at = Vec3::new(x, y, z);
         let bounds = if r.finalize {
             let mut mob = Mob::new(0, kind, at, r.yaw);
-            let facts = self.biome_facts(x.floor() as i32, y.floor() as i32, z.floor() as i32);
-            let difficulty = self.local_difficulty(r.position);
-            spawning::finalize(&mut mob, &facts, &difficulty);
+            let mut fallback = horizon_core::random::LegacyRandom::new(0);
+            let world_random = world_random.unwrap_or(&mut fallback);
+            let extra = self.finalize_mob(&mut mob, world_random);
             // TrialSpawner.spawnMob: setPersistenceRequired.
             mob.persistent = r.trial;
-            horizon_client::mobs::raider::finalize(
-                &mut mob,
-                horizon_client::mobs::raider::Reason::Other,
-            );
-            // Shulker.finalizeSpawn faces it south.
-            if mob.species() == horizon_client::mobs::Species::Shulker {
-                mob.yaw = 0.0;
-                mob.previous_yaw = 0.0;
-                mob.body_yaw = 0.0;
-                mob.previous_body_yaw = 0.0;
-                mob.head_yaw = 0.0;
-                mob.previous_head_yaw = 0.0;
+            // 1.8's finalize ran the species' own `onInitialSpawn`, which has
+            // the 26.3 raider and shulker steps' job already.
+            if !horizon_core::target::is_1_8_9() {
+                horizon_client::mobs::raider::finalize(
+                    &mut mob,
+                    horizon_client::mobs::raider::Reason::Other,
+                );
+                // Shulker.finalizeSpawn faces it south.
+                if mob.species() == horizon_client::mobs::Species::Shulker {
+                    mob.yaw = 0.0;
+                    mob.previous_yaw = 0.0;
+                    mob.body_yaw = 0.0;
+                    mob.previous_body_yaw = 0.0;
+                    mob.head_yaw = 0.0;
+                    mob.previous_head_yaw = 0.0;
+                }
             }
             let bounds = mob.bounds();
-            planned.push(Planned::Finalized(mob, r.equipment.cloned()));
+            planned.push(Planned::Finalized(mob, extra, r.equipment.cloned()));
             bounds
         } else {
             // A UUID already in the level is refused.

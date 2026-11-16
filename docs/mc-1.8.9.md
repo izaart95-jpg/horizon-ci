@@ -802,8 +802,9 @@ feet, legs, chest and head from the mob's own random. The selection is
 jar by `tools/EnchantProbe18.java`: it gates on `EnumEnchantmentType` (so an
 axe gets efficiency, never sharpness), walks the candidates in Java `HashMap`
 order at the map's post-insertion capacity, and stops at
-`canApplyTogether`. Debt: spawn eggs, spawners and loaded mobs still call the
-26.3 finalize.
+`canApplyTogether`. The same finalize runs for natural and generation spawns,
+spawn eggs, `/summon` without NBT and spawner blocks; a mob loaded from NBT
+keeps its saved state, as in 1.8.
 
 Skulls are 1.8's, not 26.3's six head blocks. The 1.8 registry has one block id
 (144) whose metadata is `SkullType | NO_DROP << 3`; the engine maps it to the
@@ -907,9 +908,9 @@ Known 1.8 debt, in the order it should be paid:
 - Chunk decoration still comes from the 26.3 generator, so the random stream
   before `MobSpawnerHelper.spawnMobs` (and therefore which packs a seed gets)
   is not 1.8's yet.
-- Mobs finalize through 1.8's `onInitialSpawn` (see the gameplay section),
-  with 1.8's armour and enchantment tables; spawn eggs, spawners and
-  chunk-loaded mobs still take the 26.3 finalize.
+- Every 1.8 mob spawn path finalizes through 1.8's `onInitialSpawn` (see the
+  gameplay section): natural and generation spawns, spawn eggs, `/summon`
+  without NBT and spawner blocks; a mob loaded from NBT keeps its saved state.
 
 ## Rules during the rewrite
 

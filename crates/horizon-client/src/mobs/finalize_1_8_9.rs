@@ -8,8 +8,10 @@
 //! sequence: a sheep's fleece colour, a villager's profession and a spider's
 //! jockey (the jockey is spawned with the mob, in `Game::spawn_jockeys`).
 //!
-//! Not ported yet: spawn eggs, spawners and loaded mobs still call the 26.3
-//! finalize instead of this one.
+//! Not ported yet: the 26.3-only conversion paths (a frog grown from a
+//! tadpole) still run the 26.3 finalize. Every 1.8 spawn path uses this one:
+//! natural and generation spawns, spawn eggs, `/summon` without NBT and
+//! spawner blocks; a mob loaded from NBT keeps its saved state, as in 1.8.
 use super::{
     Mob, Species, cube, doors, equine,
     finalize::{self, Attr, Op},
