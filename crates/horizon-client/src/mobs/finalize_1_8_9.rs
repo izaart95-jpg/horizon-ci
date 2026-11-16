@@ -8,9 +8,8 @@
 //! sequence: a sheep's fleece colour, a villager's profession and a spider's
 //! jockey (the jockey is spawned with the mob, in `Game::spawn_jockeys`).
 //!
-//! Not ported yet: the ocelot's pair of kittens one spawn in seven (it adds
-//! two entities) and 1.8's own armour and enchantment tables for monster
-//! gear, which still come from the 26.3 spawn path.
+//! Not ported yet: 1.8's own armour and enchantment tables for monster gear,
+//! which still come from the 26.3 spawn path.
 use super::{
     Mob, Species, cube, doors, equine,
     finalize::{self, Attr, Op},
@@ -22,16 +21,28 @@ use horizon_core::random::RandomSource;
 /// librarian, priest, blacksmith and butcher.
 const PROFESSIONS_1_8_9: [u8; 5] = [5, 9, 4, 14, 2];
 
+/// What finalizing a 1.8 mob produced besides the mob itself.
+#[derive(Default)]
+pub struct Finalized {
+    /// The entity id the mob becomes (a horse turns into a donkey, a zombie
+    /// into a villager zombie and a nether skeleton into a wither skeleton),
+    /// or `None` when it stays what it was.
+    pub convert: Option<&'static str>,
+    /// The entities `onInitialSpawn` spawned with it: the ocelot's two
+    /// kittens.
+    pub extra: Vec<Mob>,
+}
+
 /// `EntityLiving.onInitialSpawn` and each species' override. Returns the
-/// entity id the mob becomes (`EntityHorse` picks donkeys, `EntityZombie`
-/// villager zombies and a nether `EntitySkeleton` wither skeletons).
+/// entity id the mob becomes and the entities the spawn comes with.
 pub fn finalize(
     m: &mut Mob,
     world_random: &mut impl RandomSource,
     d: &LocalDifficulty,
     nether: bool,
-) -> Option<&'static str> {
+) -> Finalized {
     use Species as S;
+    let mut extra = Vec::new();
     // `CaveSpider.onInitialSpawn` returns without calling its superclass, so
     // it alone misses the follow-range bonus.
     if m.species() != S::CaveSpider {
@@ -54,7 +65,10 @@ pub fn finalize(
                 finalize::set_age(m, -24000);
             }
             if donkey {
-                return Some("minecraft:donkey");
+                return Finalized {
+                    convert: Some("minecraft:donkey"),
+                    extra,
+                };
             }
             equine::finalize(m);
         }
@@ -94,7 +108,10 @@ pub fn finalize(
         }
         S::Zombie => {
             if zombie(m, d) {
-                return Some("minecraft:zombie_villager");
+                return Finalized {
+                    convert: Some("minecraft:zombie_villager"),
+                    extra,
+                };
             }
         }
         // A zombie villager the path above made keeps the zombie's rolls.
@@ -110,7 +127,10 @@ pub fn finalize(
                 let pick_up = m.random.next_float() < 0.55 * d.special();
                 m.extra.pick_up_loot = pick_up;
                 halloween(m);
-                return Some("minecraft:wither_skeleton");
+                return Finalized {
+                    convert: Some("minecraft:wither_skeleton"),
+                    extra,
+                };
             }
             skeleton(m, d);
         }
@@ -126,9 +146,24 @@ pub fn finalize(
         S::ZombifiedPiglin => {
             m.extra.set_main_hand(Some("minecraft:golden_sword".into()));
         }
+        // `EntityOcelot.onInitialSpawn`: one spawn in seven brings two
+        // kittens, babies at the parent's position and facing. They are born
+        // with the spawn, not finalized themselves.
+        S::Ocelot => {
+            if world_random.next_int_bound(7).unwrap_or(1) == 0 {
+                for _ in 0..2 {
+                    let mut kitten = Mob::new(0, m.kind.clone(), m.position, m.yaw);
+                    finalize::set_age(&mut kitten, -24000);
+                    extra.push(kitten);
+                }
+            }
+        }
         _ => {}
     }
-    None
+    Finalized {
+        convert: None,
+        extra,
+    }
 }
 
 /// `EntitySheep.getRandomFleeceColor`: black, grey, light grey and brown at
@@ -284,5 +319,46 @@ mod tests {
     fn one_eight_professions_map_to_their_modern_ids() {
         assert_eq!(PROFESSIONS_1_8_9, [5, 9, 4, 14, 2]);
         assert_eq!(PROFESSIONS_1_8_9.len(), 5);
+    }
+
+    fn ocelot() -> Mob {
+        let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+        kind.species = Species::Ocelot;
+        Mob::new(
+            0,
+            std::sync::Arc::new(kind),
+            horizon_core::geometry::Vec3::new(4.5, 64.0, -2.5),
+            37.5,
+        )
+    }
+
+    /// `EntityOcelot.onInitialSpawn`: one spawn in seven comes with two
+    /// kittens, babies at the parent's position and facing.
+    #[test]
+    fn one_ocelot_in_seven_brings_two_kittens() {
+        use horizon_core::random::LegacyRandom;
+        let d = LocalDifficulty::new(2, 0, 0, 1.0);
+        let (mut kittens, mut plain) = (0, 0);
+        for seed in 0..64 {
+            let mut parent = ocelot();
+            let out = finalize(&mut parent, &mut LegacyRandom::new(seed), &d, false);
+            assert_eq!(out.convert, None);
+            match out.extra.len() {
+                0 => plain += 1,
+                2 => {
+                    for kitten in &out.extra {
+                        assert_eq!(kitten.species(), Species::Ocelot);
+                        assert_eq!(kitten.extra.age, -24000);
+                        assert_eq!(kitten.position, parent.position);
+                        assert_eq!(kitten.yaw, parent.yaw);
+                    }
+                    kittens += 1;
+                }
+                n => panic!("seed {seed} spawned {n} kittens"),
+            }
+        }
+        // The gate is one in seven, so both outcomes appear in 64 seeds.
+        assert!(kittens > 0, "no seed in 64 rolled the kittens");
+        assert!(plain > 0, "every seed rolled the kittens");
     }
 }

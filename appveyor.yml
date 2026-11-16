@@ -18,7 +18,7 @@ install:
   - sudo apt-get install -y -qq libasound2-dev libudev-dev pkg-config
 
 build_script:
-  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins achievement -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins finalize -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib finalize_1_8_9 -j 2'
 
 test: off

@@ -180,13 +180,16 @@ impl GameLevel<'_, '_> {
     }
     /// `EntityMob`'s constructor plus `canSpawn`, `method_2469`, `initialize`
     /// and the second `method_2469` of `MobSpawnerHelper.tickSpawners`. The
-    /// mob is not added to the level when any check fails.
+    /// mob is not added to the level when any check fails. Returns the
+    /// entities `onInitialSpawn` spawned with it (the ocelot's kittens) in
+    /// `extra`.
     fn build_mob_1_8_9(
         &self,
         entity: &str,
         position: [f64; 3],
         yaw: f32,
         world_random: &mut LegacyRandom,
+        extra: &mut Vec<Mob>,
     ) -> Option<Mob> {
         let kind = self.game.res.mob_types().get(entity)?.clone();
         let [x, y, z] = position;
@@ -198,10 +201,11 @@ impl GameLevel<'_, '_> {
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
-        self.game.finalize_mob(&mut mob, world_random);
+        let with = self.game.finalize_mob(&mut mob, world_random);
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
+        extra.extend(with);
         Some(mob)
     }
 }
@@ -535,7 +539,10 @@ fn spawn_chunk_1_8_9(
                 continue;
             }
             let yaw = random.next_float() * 360.0;
-            let Some(mob) = l.build_mob_1_8_9(picked.entity, [fx, fy, fz], yaw, random) else {
+            let mut kittens = Vec::new();
+            let Some(mob) =
+                l.build_mob_1_8_9(picked.entity, [fx, fy, fz], yaw, random, &mut kittens)
+            else {
                 // The failed try still contributes the running count below,
                 // as vanilla's `o += t` does.
                 o += t;
@@ -544,6 +551,11 @@ fn spawn_chunk_1_8_9(
             let bounds = mob.bounds();
             l.pending.borrow_mut().push(bounds);
             pending.push(mob);
+            // `onInitialSpawn` spawned them with the mob, at its position.
+            for kitten in kittens {
+                l.pending.borrow_mut().push(kitten.bounds());
+                pending.push(kitten);
+            }
             t += 1;
             if t >= spawn18::limit_per_chunk(picked.entity) {
                 // `continue block6`: the next chunk, without the final
@@ -733,18 +745,19 @@ impl<'a> Game<'a> {
     /// The game's `finalizeSpawn` for a mob the spawner created: biome facts
     /// at its feet and the local difficulty. 1.8's `onInitialSpawn` also
     /// reads the level's random (a sheep's fleece colour and a villager's
-    /// profession), and can turn the mob into another species.
-    fn finalize_mob(&self, mob: &mut Mob, world_random: &mut impl RandomSource) {
+    /// profession), can turn the mob into another species, and can spawn
+    /// entities with it (the ocelot's kittens), which are returned.
+    fn finalize_mob(&self, mob: &mut Mob, world_random: &mut impl RandomSource) -> Vec<Mob> {
         let p = mob.position;
         let difficulty = self.local_difficulty([p.x, p.y, p.z]);
         if horizon_core::target::is_1_8_9() {
-            let convert = horizon_client::mobs::finalize_1_8_9::finalize(
+            let out = horizon_client::mobs::finalize_1_8_9::finalize(
                 mob,
                 world_random,
                 &difficulty,
                 self.dim == Dim::Nether,
             );
-            if let Some(id) = convert
+            if let Some(id) = out.convert
                 && let Some(kind) = self.res.mob_types().get(id)
             {
                 mob.kind = kind.clone();
@@ -759,10 +772,11 @@ impl<'a> Game<'a> {
                     );
                 }
             }
-            return;
+            return out.extra;
         }
         let facts = self.biome_facts(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
         horizon_client::mobs::spawning::finalize(mob, &facts, &difficulty);
+        Vec::new()
     }
     /// Creates a mob the spawner accepted, finalized the game's way; the
     /// caller adds it with [`Game::add_spawned`].
@@ -771,7 +785,7 @@ impl<'a> Game<'a> {
         let [x, y, z] = r.position;
         let mut mob = Mob::new(0, kind, Vec3::new(x, y, z), r.yaw);
         // 26.3's finalize draws from the mob's own random only.
-        self.finalize_mob(&mut mob, &mut LegacyRandom::new(0));
+        let _ = self.finalize_mob(&mut mob, &mut LegacyRandom::new(0));
         horizon_client::mobs::raider::finalize(
             &mut mob,
             horizon_client::mobs::raider::Reason::Natural,
@@ -1176,8 +1190,9 @@ impl<'a> Game<'a> {
                     Vec3::new(position[0], position[1], position[2]),
                     yaw,
                 );
-                self.finalize_mob(&mut mob, world_random);
+                let kittens = self.finalize_mob(&mut mob, world_random);
                 pending.push(mob);
+                pending.extend(kittens);
                 true
             };
             spawn18::spawn_mobs_for_chunk_generation(

@@ -792,10 +792,11 @@ professions, the zombie's loot picking, baby, villager zombie, door breaking,
 armour, pumpkin and `handleAttributes` bonuses (knockback resistance, follow
 range, the leader's reinforcements and health), and the skeleton's armour and
 bow or, four times in five in the nether, a wither skeleton with a stone sword
-and four attack damage. Sheep colour, villager profession and the spider's
-jockey draw on `World.random`, as in 1.8. Debt: the ocelot's 1-in-7 pair of
-kittens is not spawned yet, the armour and enchantment tables are still 26.3's,
-and spawn eggs, spawners and loaded mobs still call the 26.3 finalize.
+and four attack damage, and the ocelot's one-in-seven pair of kittens, babies
+at the parent's position and facing. Sheep colour, villager profession, the
+ocelot's kittens and the spider's jockey draw on `World.random`, as in 1.8.
+Debt: the armour and enchantment tables are still 26.3's, and spawn eggs,
+spawners and loaded mobs still call the 26.3 finalize.
 
 Skulls are 1.8's, not 26.3's six head blocks. The 1.8 registry has one block id
 (144) whose metadata is `SkullType | NO_DROP << 3`; the engine maps it to the
@@ -895,9 +896,8 @@ Known 1.8 debt, in the order it should be paid:
   before `MobSpawnerHelper.spawnMobs` (and therefore which packs a seed gets)
   is not 1.8's yet.
 - Mobs finalize through 1.8's `onInitialSpawn` (see the gameplay section), but
-  the ocelot's pair of kittens is still missing, the monster armour and
-  enchantment tables are 26.3's, and spawn eggs, spawners and chunk-loaded
-  mobs still take the 26.3 finalize.
+  the monster armour and enchantment tables are 26.3's, and spawn eggs,
+  spawners and chunk-loaded mobs still take the 26.3 finalize.
 
 ## Rules during the rewrite
 
