@@ -107,7 +107,7 @@ pub fn finalize(
             cube::set_size(m, 1 << scale);
         }
         S::Zombie => {
-            if zombie(m, d) {
+            if zombie(m, d, world_random) {
                 return Finalized {
                     convert: Some("minecraft:zombie_villager"),
                     extra,
@@ -116,7 +116,7 @@ pub fn finalize(
         }
         // A zombie villager the path above made keeps the zombie's rolls.
         S::ZombieVillager => {
-            zombie(m, d);
+            zombie(m, d, world_random);
         }
         S::Skeleton => {
             // `EntitySkeleton.onInitialSpawn`: four nether skeletons in five
@@ -183,10 +183,11 @@ fn sheep_color(roll: i32, rare: i32) -> u8 {
 /// time in twenty each, doors, armour, the halloween pumpkin and
 /// `handleAttributes`' knockback, follow range and leader bonuses. True when
 /// the zombie is a villager zombie.
-fn zombie(m: &mut Mob, d: &LocalDifficulty) -> bool {
+fn zombie(m: &mut Mob, d: &LocalDifficulty, world_random: &mut impl RandomSource) -> bool {
     m.extra.pick_up_loot = m.random.next_float() < 0.55 * d.special();
-    let baby = m.random.next_float() < 0.05;
-    let villager = m.random.next_float() < 0.05;
+    // The living data's two rolls are the level's, not the mob's.
+    let baby = world_random.next_float() < 0.05;
+    let villager = world_random.next_float() < 0.05;
     if baby {
         finalize::set_age(m, -24000);
     }
@@ -360,5 +361,37 @@ mod tests {
         // The gate is one in seven, so both outcomes appear in 64 seeds.
         assert!(kittens > 0, "no seed in 64 rolled the kittens");
         assert!(plain > 0, "every seed rolled the kittens");
+    }
+
+    fn zombie(at: (f64, f64)) -> Mob {
+        let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+        kind.species = Species::Zombie;
+        Mob::new(
+            0,
+            std::sync::Arc::new(kind),
+            horizon_core::geometry::Vec3::new(at.0, 64.0, at.1),
+            0.0,
+        )
+    }
+
+    /// `EntityZombie.onInitialSpawn` takes its two living-data rolls from the
+    /// level's random: the first 5% is the baby, the second the villager
+    /// zombie. A world seed decides both whatever the mob's own random is,
+    /// which the position varies.
+    #[test]
+    fn one_eight_zombie_baby_comes_from_the_worlds_random() {
+        use horizon_core::random::LegacyRandom;
+        let d = LocalDifficulty::new(2, 0, 0, 1.0);
+        // 61000183 rolls 0.0261 then 0.6459: a baby, not a villager.
+        for at in [(0.5, 0.5), (40.5, -16.5)] {
+            let mut m = zombie(at);
+            let out = finalize(&mut m, &mut LegacyRandom::new(61_000_183), &d, false);
+            assert_eq!(m.extra.age, -24000, "{at:?}");
+            assert_eq!(out.convert, None, "{at:?}");
+            // Seed 0 rolls 0.7310: an adult, not a villager.
+            let mut m = zombie(at);
+            finalize(&mut m, &mut LegacyRandom::new(0), &d, false);
+            assert_eq!(m.extra.age, 0, "{at:?}");
+        }
     }
 }
