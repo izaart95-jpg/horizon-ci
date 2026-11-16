@@ -13,6 +13,7 @@ pub mod chest_loot_1_8_9;
 pub mod content_namespaces;
 pub mod cooldowns;
 pub mod enchant;
+pub mod enchant_1_8_9;
 pub mod firework;
 pub mod flowers;
 pub mod fuel_1_8_9;

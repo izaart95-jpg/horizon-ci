@@ -795,8 +795,15 @@ bow or, four times in five in the nether, a wither skeleton with a stone sword
 and four attack damage, and the ocelot's one-in-seven pair of kittens, babies
 at the parent's position and facing. Sheep colour, villager profession, the
 ocelot's kittens and the spider's jockey draw on `World.random`, as in 1.8.
-Debt: the armour and enchantment tables are still 26.3's, and spawn eggs,
-spawners and loaded mobs still call the 26.3 finalize.
+The spawn gear is 1.8's too: `setEquipmentBasedOnDifficulty` gives the armour
+set, then `setEnchantmentBasedOnDifficulty` enchants the main hand and the
+feet, legs, chest and head from the mob's own random. The selection is
+`crates/horizon-items/src/enchant_1_8_9.rs` with tables generated from the real
+jar by `tools/EnchantProbe18.java`: it gates on `EnumEnchantmentType` (so an
+axe gets efficiency, never sharpness), walks the candidates in Java `HashMap`
+order at the map's post-insertion capacity, and stops at
+`canApplyTogether`. Debt: spawn eggs, spawners and loaded mobs still call the
+26.3 finalize.
 
 Skulls are 1.8's, not 26.3's six head blocks. The 1.8 registry has one block id
 (144) whose metadata is `SkullType | NO_DROP << 3`; the engine maps it to the
@@ -895,9 +902,9 @@ Known 1.8 debt, in the order it should be paid:
 - Chunk decoration still comes from the 26.3 generator, so the random stream
   before `MobSpawnerHelper.spawnMobs` (and therefore which packs a seed gets)
   is not 1.8's yet.
-- Mobs finalize through 1.8's `onInitialSpawn` (see the gameplay section), but
-  the monster armour and enchantment tables are 26.3's, and spawn eggs,
-  spawners and chunk-loaded mobs still take the 26.3 finalize.
+- Mobs finalize through 1.8's `onInitialSpawn` (see the gameplay section),
+  with 1.8's armour and enchantment tables; spawn eggs, spawners and
+  chunk-loaded mobs still take the 26.3 finalize.
 
 ## Rules during the rewrite
 

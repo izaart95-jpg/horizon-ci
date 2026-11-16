@@ -806,7 +806,11 @@ impl<'a> Game<'a> {
             let id = mob.id;
             self.mobs.push(mob);
             self.native_mobs_joined(self.mobs.len() - 1, true);
-            self.enchant_spawn_equipment(id);
+            // 1.8's `setEnchantmentBasedOnDifficulty` runs inside the
+            // finalize above; the 26.3 spawn equipment would pick again.
+            if !horizon_core::target::is_1_8_9() {
+                self.enchant_spawn_equipment(id);
+            }
             // 1.8 rolls the pumpkin at the end of `onInitialSpawn`.
             if !horizon_core::target::is_1_8_9() {
                 self.halloween_spawn_head(id);

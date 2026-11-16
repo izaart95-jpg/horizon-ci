@@ -376,6 +376,9 @@ impl Enchantments {
         self.props.get(item)
     }
     pub fn enchantable(&self, item: &str) -> u32 {
+        if horizon_core::target::is_1_8_9() {
+            return crate::enchant_1_8_9::enchantability(item);
+        }
         self.props(item).map_or(0, |p| p.enchantable)
     }
     /// Whether `item` matches an id / `#tag` list.

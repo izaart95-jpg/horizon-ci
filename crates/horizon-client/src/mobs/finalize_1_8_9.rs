@@ -8,11 +8,12 @@
 //! sequence: a sheep's fleece colour, a villager's profession and a spider's
 //! jockey (the jockey is spawned with the mob, in `Game::spawn_jockeys`).
 //!
-//! Not ported yet: 1.8's own armour and enchantment tables for monster gear,
-//! which still come from the 26.3 spawn path.
+//! Not ported yet: spawn eggs, spawners and loaded mobs still call the 26.3
+//! finalize instead of this one.
 use super::{
     Mob, Species, cube, doors, equine,
     finalize::{self, Attr, Op},
+    gear,
     spawning::LocalDifficulty,
 };
 use horizon_core::random::RandomSource;
@@ -107,7 +108,7 @@ pub fn finalize(
             cube::set_size(m, 1 << scale);
         }
         S::Zombie => {
-            if zombie(m, d, world_random) {
+            if zombie(m, d, world_random, false) {
                 return Finalized {
                     convert: Some("minecraft:zombie_villager"),
                     extra,
@@ -116,7 +117,7 @@ pub fn finalize(
         }
         // A zombie villager the path above made keeps the zombie's rolls.
         S::ZombieVillager => {
-            zombie(m, d, world_random);
+            zombie(m, d, world_random, false);
         }
         S::Skeleton => {
             // `EntitySkeleton.onInitialSpawn`: four nether skeletons in five
@@ -141,10 +142,12 @@ pub fn finalize(
             m.extra.pick_up_loot = pick_up;
             halloween(m);
         }
-        // `EntityPigZombie.onInitialSpawn`: always an adult, with a golden
-        // sword (1.8 has no golden spear).
+        // `EntityPigZombie.onInitialSpawn` runs `EntityZombie`'s whole path
+        // and then clears the child flag; its own equipment override gives it
+        // a golden sword (1.8 has no golden spear) and no armour.
         S::ZombifiedPiglin => {
-            m.extra.set_main_hand(Some("minecraft:golden_sword".into()));
+            zombie(m, d, world_random, true);
+            finalize::set_age(m, 0);
         }
         // `EntityOcelot.onInitialSpawn`: one spawn in seven brings two
         // kittens, babies at the parent's position and facing. They are born
@@ -180,10 +183,16 @@ fn sheep_color(roll: i32, rare: i32) -> u8 {
 }
 
 /// `EntityZombie.onInitialSpawn`: loot picking, a baby or a villager one
-/// time in twenty each, doors, armour, the halloween pumpkin and
-/// `handleAttributes`' knockback, follow range and leader bonuses. True when
-/// the zombie is a villager zombie.
-fn zombie(m: &mut Mob, d: &LocalDifficulty, world_random: &mut impl RandomSource) -> bool {
+/// time in twenty each, doors, armour, enchantments, the halloween pumpkin
+/// and `handleAttributes`' knockback, follow range and leader bonuses. True
+/// when the zombie is a villager zombie. A pigman runs the same path with
+/// its own equipment override, which is the golden sword alone.
+fn zombie(
+    m: &mut Mob,
+    d: &LocalDifficulty,
+    world_random: &mut impl RandomSource,
+    pigman: bool,
+) -> bool {
     m.extra.pick_up_loot = m.random.next_float() < 0.55 * d.special();
     // The living data's two rolls are the level's, not the mob's.
     let baby = world_random.next_float() < 0.05;
@@ -193,7 +202,12 @@ fn zombie(m: &mut Mob, d: &LocalDifficulty, world_random: &mut impl RandomSource
     }
     let can_break_doors = m.random.next_float() < d.special() * 0.1;
     doors::set_can_break_doors(m, can_break_doors);
-    populate_armor(m, d);
+    if pigman {
+        m.extra.set_main_hand(Some("minecraft:golden_sword".into()));
+    } else {
+        populate_armor(m, d);
+    }
+    enchant_equipment(m, d);
     halloween(m);
     // `EntityZombie.handleAttributes`: the knockback resistance, the follow
     // range and the leader's reinforcements and health.
@@ -238,11 +252,12 @@ fn zombie(m: &mut Mob, d: &LocalDifficulty, world_random: &mut impl RandomSource
     villager
 }
 
-/// The non-wither `EntitySkeleton.onInitialSpawn`: armour, a bow, loot
-/// picking and the halloween pumpkin.
+/// The non-wither `EntitySkeleton.onInitialSpawn`: armour, a bow,
+/// enchantments, loot picking and the halloween pumpkin.
 fn skeleton(m: &mut Mob, d: &LocalDifficulty) {
     populate_armor(m, d);
     m.extra.set_main_hand(Some("minecraft:bow".into()));
+    enchant_equipment(m, d);
     let pick_up = m.random.next_float() < 0.55 * d.special();
     m.extra.pick_up_loot = pick_up;
     halloween(m);
@@ -279,6 +294,43 @@ fn populate_armor(m: &mut Mob, d: &LocalDifficulty) {
             *slot = Some(format!("minecraft:{material}_{piece}").into());
         }
     }
+}
+
+/// `EntityLiving.setEnchantmentBasedOnDifficulty`: the main hand at
+/// `0.25 * special`, then each armour piece from the feet up at
+/// `0.5 * special`, each at a level of `5 + special * nextInt(18)` from the
+/// mob's own random. The tables and the selection are
+/// [`horizon_items::enchant_1_8_9`], not the 26.3 spawn equipment.
+fn enchant_equipment(m: &mut Mob, d: &LocalDifficulty) {
+    let special = d.special();
+    let mut random = m.random.clone();
+    if m.extra.main_hand.is_some() && random.next_float() < 0.25 * special {
+        let level = (5.0 + special * random.next_int_bound(18).unwrap_or(0) as f32) as i32;
+        let item = m.extra.main_hand.clone().expect("checked above");
+        for (enchantment, level) in horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
+        {
+            gear::upgrade(m, gear::MAIN, &enchantment, level);
+        }
+    }
+    // `getCurrentArmor(0..3)` is the feet, legs, chest and head.
+    let armor = [
+        (gear::FEET, m.extra.feet.clone()),
+        (gear::LEGS, m.extra.legs.clone()),
+        (gear::CHEST, m.extra.chest.clone()),
+        (gear::HEAD, m.extra.head.clone()),
+    ];
+    for (slot, item) in armor {
+        let Some(item) = item else { continue };
+        if random.next_float() >= 0.5 * special {
+            continue;
+        }
+        let level = (5.0 + special * random.next_int_bound(18).unwrap_or(0) as f32) as i32;
+        for (enchantment, level) in horizon_items::enchant_1_8_9::add_random(&mut random, &item, level)
+        {
+            gear::upgrade(m, slot, &enchantment, level);
+        }
+    }
+    m.random = random;
 }
 
 /// `Zombie`/`AbstractSkeleton`'s halloween pumpkin, drawn at the end of
