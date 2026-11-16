@@ -1673,17 +1673,29 @@ mod tests {
     /// `EntityItem.playerTouch`: one achievement per picked stack.
     #[test]
     fn one_eight_pickups_grant_their_items_achievement() {
-        assert_eq!(pickup_achievements("minecraft:oak_log"), vec!["mineWood"]);
         assert_eq!(
-            pickup_achievements("minecraft:dark_oak_log"),
+            Game::pickup_achievements("minecraft:oak_log"),
             vec!["mineWood"]
         );
-        assert_eq!(pickup_achievements("minecraft:leather"), vec!["killCow"]);
-        assert_eq!(pickup_achievements("minecraft:diamond"), vec!["diamonds"]);
-        assert_eq!(pickup_achievements("minecraft:blaze_rod"), vec!["blazeRod"]);
-        assert!(pickup_achievements("minecraft:dirt").is_empty());
+        assert_eq!(
+            Game::pickup_achievements("minecraft:dark_oak_log"),
+            vec!["mineWood"]
+        );
+        assert_eq!(
+            Game::pickup_achievements("minecraft:leather"),
+            vec!["killCow"]
+        );
+        assert_eq!(
+            Game::pickup_achievements("minecraft:diamond"),
+            vec!["diamonds"]
+        );
+        assert_eq!(
+            Game::pickup_achievements("minecraft:blaze_rod"),
+            vec!["blazeRod"]
+        );
+        assert!(Game::pickup_achievements("minecraft:dirt").is_empty());
         // Planks are not logs, though both are wood.
-        assert!(pickup_achievements("minecraft:oak_planks").is_empty());
+        assert!(Game::pickup_achievements("minecraft:oak_planks").is_empty());
     }
 
     /// `EntityPlayerMP.changeDimension`: entering the End, leaving it and

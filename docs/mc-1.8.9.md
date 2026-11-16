@@ -774,12 +774,28 @@ leaves block but are skipped as foliage. Packs exist only in the overworld;
 the nether, End, flat and debug generators place none. Debt: the 26.3 generator
 still decides which biome a column has (the 1.8 list is selected by that biome
 name), its decoration random stream is not 1.8's yet, so the draws before the
-pack (and the pack itself) cannot be seed-identical, the packed mobs go through
-26.3's `finalize_mob` rather than 1.8's `EntityData`/`initialize`, 1.8 village
+pack (and the pack itself) cannot be seed-identical, 1.8 village
 generation is unported, a dedicated server's `spawn-animals`/`spawn-monsters`
 settings are not modelled, `isFullCube` and `World.isOpaque` read 26.3's
 `can_occlude` with the 1.8 exceptions, and `findSpawnLocation` rescans the
 column per category instead of reusing the chunk heightmap.
+
+Each mob a spawner creates finalizes through 1.8's `EntityLiving.onInitialSpawn`
+(`crates/horizon-client/src/mobs/finalize_1_8_9.rs`): the superclass adds the
+`nextGaussian() * 0.05` follow-range bonus, which the cave spider alone skips,
+then the species runs its override — the horse's one-in-ten donkey and
+one-in-five foal with 15..31 health, 0.1125..0.3375 speed and a 0.4..1.0 jump
+strength, the sheep's 5-in-100 black, grey and light grey plus 3-in-100 brown
+with the once-in-500 pink, the rabbit's six coats, the slime's 1/2/4 size (one
+step bigger half the time on harder difficulties), the villager's five
+professions, the zombie's loot picking, baby, villager zombie, door breaking,
+armour, pumpkin and `handleAttributes` bonuses (knockback resistance, follow
+range, the leader's reinforcements and health), and the skeleton's armour and
+bow or, four times in five in the nether, a wither skeleton with a stone sword
+and four attack damage. Sheep colour, villager profession and the spider's
+jockey draw on `World.random`, as in 1.8. Debt: the ocelot's 1-in-7 pair of
+kittens is not spawned yet, the armour and enchantment tables are still 26.3's,
+and spawn eggs, spawners and loaded mobs still call the 26.3 finalize.
 
 Skulls are 1.8's, not 26.3's six head blocks. The 1.8 registry has one block id
 (144) whose metadata is `SkullType | NO_DROP << 3`; the engine maps it to the
@@ -877,10 +893,11 @@ Known 1.8 debt, in the order it should be paid:
   rather than re-derived from 1.8 code.
 - Chunk decoration still comes from the 26.3 generator, so the random stream
   before `MobSpawnerHelper.spawnMobs` (and therefore which packs a seed gets)
-  is not 1.8's yet. Generation packs also finalize through 26.3's
-  `finalize_mob`; 1.8's `EntityData` sharing and `initialize` (persistent
-  villager equipment, age, and the `World.random` draws sheep colour and
-  ocelot kittens make) are not modelled.
+  is not 1.8's yet.
+- Mobs finalize through 1.8's `onInitialSpawn` (see the gameplay section), but
+  the ocelot's pair of kittens is still missing, the monster armour and
+  enchantment tables are 26.3's, and spawn eggs, spawners and chunk-loaded
+  mobs still take the 26.3 finalize.
 
 ## Rules during the rewrite
 

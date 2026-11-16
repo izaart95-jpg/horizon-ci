@@ -37,6 +37,7 @@ pub mod equine;
 pub mod equip;
 pub mod farm;
 pub mod finalize;
+pub mod finalize_1_8_9;
 pub mod fox;
 pub mod frog;
 pub mod gear;

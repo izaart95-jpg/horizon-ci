@@ -513,7 +513,7 @@ pub fn spawn_mobs_for_chunk_generation<
     cz: i32,
     random: &mut R,
     world_random: &mut W,
-    spawn: &mut dyn FnMut(&L, &'static str, [f64; 3], f32) -> bool,
+    spawn: &mut dyn FnMut(&L, &'static str, [f64; 3], f32, &mut W) -> bool,
     trace: &mut dyn FnMut(GenEvent18),
 ) {
     // `SurfaceChunkGenerator.decorateChunk` reads the biome at the chunk
@@ -543,11 +543,15 @@ pub fn spawn_mobs_for_chunk_generation<
                 trace(GenEvent18::Top(x, y, z));
                 if l.spawnable(Location18::OnGround, x, y, z) {
                     let yaw = random.next_float() * 360.0;
+                    // The mob is finalized inside the callback, and 1.8's
+                    // sheep colour and villager profession roll on the
+                    // world's random, so it goes along.
                     placed = spawn(
                         l,
                         entry.entity,
                         [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5],
                         yaw,
+                        world_random,
                     );
                     if placed {
                         trace(GenEvent18::Spawn(
@@ -1232,7 +1236,7 @@ mod tests {
             0,
             &mut random,
             &mut world,
-            &mut |_, entity, position, yaw| {
+            &mut |_, entity, position, yaw, _| {
                 placed.push((entity, position, yaw));
                 true
             },
@@ -1281,7 +1285,7 @@ mod tests {
             0,
             &mut random,
             &mut world,
-            &mut |_, _, _, _| false,
+            &mut |_, _, _, _, _| false,
             &mut |event| events.push(event),
         );
         assert_eq!(
@@ -1313,7 +1317,7 @@ mod tests {
             0,
             &mut random,
             &mut world,
-            &mut |_, _, _, _| true,
+            &mut |_, _, _, _, _| true,
             &mut |_| {},
         );
         assert_eq!(random.floats_used, 0, "the list is empty, so no pack");
@@ -1331,7 +1335,7 @@ mod tests {
             0,
             &mut random,
             &mut world,
-            &mut |_, _, _, _| true,
+            &mut |_, _, _, _, _| true,
             &mut |_| {},
         );
         assert_eq!((random.floats_used, random.ints_used), (0, 0));

@@ -198,7 +198,7 @@ impl GameLevel<'_, '_> {
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
-        self.game.finalize_mob(&mut mob);
+        self.game.finalize_mob(&mut mob, world_random);
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
@@ -731,11 +731,37 @@ impl<'a> Game<'a> {
         }
     }
     /// The game's `finalizeSpawn` for a mob the spawner created: biome facts
-    /// at its feet and the local difficulty.
-    fn finalize_mob(&self, mob: &mut Mob) {
+    /// at its feet and the local difficulty. 1.8's `onInitialSpawn` also
+    /// reads the level's random (a sheep's fleece colour and a villager's
+    /// profession), and can turn the mob into another species.
+    fn finalize_mob(&self, mob: &mut Mob, world_random: &mut impl RandomSource) {
         let p = mob.position;
-        let facts = self.biome_facts(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
         let difficulty = self.local_difficulty([p.x, p.y, p.z]);
+        if horizon_core::target::is_1_8_9() {
+            let convert = horizon_client::mobs::finalize_1_8_9::finalize(
+                mob,
+                world_random,
+                &difficulty,
+                self.dim == Dim::Nether,
+            );
+            if let Some(id) = convert
+                && let Some(kind) = self.res.mob_types().get(id)
+            {
+                mob.kind = kind.clone();
+                // `EntityHorse` became a donkey: its own jump strength,
+                // health and 0.175 speed follow from the new type.
+                if mob.species() == Species::Donkey {
+                    horizon_client::mobs::equine::finalize(mob);
+                    horizon_client::mobs::finalize::set_base(
+                        mob,
+                        horizon_client::mobs::finalize::Attr::MovementSpeed,
+                        0.175,
+                    );
+                }
+            }
+            return;
+        }
+        let facts = self.biome_facts(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
         horizon_client::mobs::spawning::finalize(mob, &facts, &difficulty);
     }
     /// Creates a mob the spawner accepted, finalized the game's way; the
@@ -744,7 +770,8 @@ impl<'a> Game<'a> {
         let kind = self.res.mob_types().get(r.entity)?.clone();
         let [x, y, z] = r.position;
         let mut mob = Mob::new(0, kind, Vec3::new(x, y, z), r.yaw);
-        self.finalize_mob(&mut mob);
+        // 26.3's finalize draws from the mob's own random only.
+        self.finalize_mob(&mut mob, &mut LegacyRandom::new(0));
         horizon_client::mobs::raider::finalize(
             &mut mob,
             horizon_client::mobs::raider::Reason::Natural,
@@ -766,7 +793,10 @@ impl<'a> Game<'a> {
             self.mobs.push(mob);
             self.native_mobs_joined(self.mobs.len() - 1, true);
             self.enchant_spawn_equipment(id);
-            self.halloween_spawn_head(id);
+            // 1.8 rolls the pumpkin at the end of `onInitialSpawn`.
+            if !horizon_core::target::is_1_8_9() {
+                self.halloween_spawn_head(id);
+            }
             if !persistent {
                 self.spawn_jockeys(id, true);
             }
@@ -1132,7 +1162,11 @@ impl<'a> Game<'a> {
         let mut pending = Vec::new();
         {
             let level = self.natural_level();
-            let mut spawn = |_: &GameLevel, entity: &'static str, position: [f64; 3], yaw: f32| {
+            let mut spawn = |_: &GameLevel,
+                             entity: &'static str,
+                             position: [f64; 3],
+                             yaw: f32,
+                             world_random: &mut LegacyRandom| {
                 let Some(kind) = self.res.mob_types().get(entity).cloned() else {
                     return false;
                 };
@@ -1142,7 +1176,7 @@ impl<'a> Game<'a> {
                     Vec3::new(position[0], position[1], position[2]),
                     yaw,
                 );
-                self.finalize_mob(&mut mob);
+                self.finalize_mob(&mut mob, world_random);
                 pending.push(mob);
                 true
             };

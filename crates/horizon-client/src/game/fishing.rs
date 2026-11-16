@@ -1569,7 +1569,7 @@ mod tests {
     #[test]
     fn one_eight_hook_draws_leave_the_level_stream_alone() {
         use super::{Hook, HookLerp, State, hook_rng};
-        use horizon_core::random::LegacyRandom;
+        use horizon_core::random::{LegacyRandom, RandomSource};
         let mut hook = Hook {
             id: 1,
             position: Vec3::ZERO,
