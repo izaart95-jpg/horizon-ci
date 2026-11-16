@@ -1903,11 +1903,13 @@ mod tests {
         let edge = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
         // Java's `max + 1` covers the cell that starts on the max coordinate.
         assert!(fluid_in_box(|x, y, z| (x, y, z) == (1, 1, 1), edge));
-        // One block tall: water in the bottom cell fills the bottom fifth,
-        // and the cell starting at y = 1 fills the top fifth.
-        let tall = Aabb::new(Vec3::ZERO, Vec3::new(0.25, 1.0, 0.25));
+        // A five-block-tall box: the cell at the bottom is in the first
+        // slice, the one at the top in the last, and a cell on a slice
+        // boundary is in the two slices that touch it.
+        let tall = Aabb::new(Vec3::ZERO, Vec3::new(0.25, 5.0, 0.25));
         assert_eq!(water_fraction_of_box(|_, y, _| y == 0, tall), 0.2);
-        assert_eq!(water_fraction_of_box(|_, y, _| y == 1, tall), 0.2);
+        assert_eq!(water_fraction_of_box(|_, y, _| y == 1, tall), 0.4);
+        assert_eq!(water_fraction_of_box(|_, y, _| y == 5, tall), 0.2);
         assert_eq!(water_fraction_of_box(|_, _, _| false, tall), 0.0);
         assert_eq!(water_fraction_of_box(|_, _, _| true, tall), 1.0);
     }
