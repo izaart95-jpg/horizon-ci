@@ -1589,10 +1589,11 @@ mod tests {
     #[test]
     fn avoid_biomes_samples_around_the_middle_block() {
         let r = registry(
-            &[],
+            &[("t:s", json!({"type": "minecraft:igloo", "biomes": []}))],
             &[(
                 "yung:temples",
-                json!({"structures": [], "placement": {"type": "minecraft:random_spread",
+                json!({"structures": [{"structure": "t:s", "weight": 1}],
+                    "placement": {"type": "minecraft:random_spread",
                     "spacing": 24, "separation": 8, "salt": 1,
                     "horizon:avoid_biomes": {"biomes": ["#t:one", "#t:two"],
                         "radius": 48, "step": 2, "y": 120}}}),
@@ -1671,9 +1672,10 @@ mod tests {
         );
         let kept: Vec<&str> = r.structures.iter().map(|s| s.name.as_str()).collect();
         if horizon_core::target::is_1_8_9() {
-            assert_eq!(kept, ["village_plains", "monument", "fortress"]);
+            // Definitions and sets load in registry (identifier) order.
+            assert_eq!(kept, ["fortress", "monument", "village_plains"]);
             let sets: Vec<&str> = r.sets.iter().map(|s| s.name.as_str()).collect();
-            assert_eq!(sets, ["villages", "ocean_monuments", "nether_complexes"]);
+            assert_eq!(sets, ["nether_complexes", "ocean_monuments", "villages"]);
             // The nether set keeps its fortress and lost the bastion's camp.
             let nether = r
                 .sets

@@ -628,9 +628,17 @@ pick, its damage and enchant rolls and the XP roll draw from it, while the
 level's stream only advances for `getResult`'s category roll, and casting the
 rod no longer consumes it. The hook's own draws use 1.8's ranges: a bite is
 `nextInt(random, 10, 30)`, the wait `nextInt(random, 100, 900)` and the swim
-angle `nextGaussian() * 4.0`. Debt: the tick around those draws is still 26.3's
-state machine (a bobbing state, `0.03` gravity in air, a `nextFloat`-weighted
-dip and 26.3's water sampling), so the bobber's path is not 1.8's yet.
+angle `nextGaussian() * 4.0`. The tick around those draws is 1.8's
+`EntityFishHook.tick`: the hook moves every tick, the block ray runs before
+the move and the nearest living mob or player along it is hooked (items
+return false from `attackEntityFrom`), a hit block freezes it for one tick
+because 1.8 never writes `xTile`/`yTile`/`zTile`, the drag is `0.92` (`0.5`
+against a wall or the ground, `0.9` of that in water), the five-slice water
+fraction adds `0.04 * (2f - 1)` to the motion every tick (`-0.04` in air), and
+reeling pulls with `sqrt(distance) * 0.08` on Y for 3 rod damage. Debt: in
+single player without LAN there is no host target, so the thrower's own body
+is not hookable, and a hook's `new Random()` is not seed-reproducible in
+vanilla either.
 
 Block drops are 1.8's code, not the 26.3 loot tables. `tools/BlockDropProbe18.java`
 dumps every 1.8 state (7,806 states) and

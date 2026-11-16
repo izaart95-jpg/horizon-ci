@@ -44,6 +44,9 @@ pub(super) struct Hook {
     fish_angle: f32,
     out_of_water: i32,
     open_water: bool,
+    /// `FishingHook.field_146047_f` (`au`): ticks since the hook last left the
+    /// ground; the thrower's own body is skipped while it is under 5.
+    airborne: i32,
     luck: i32,
     lure: i32,
     /// `Entity.random`: the hook's own stream, which 1.8 draws the launch
@@ -71,6 +74,39 @@ fn bounds(p: Vec3) -> Aabb {
 /// RandomSource.triangle(mode, deviation).
 fn triangle(r: &mut impl RandomSource, mode: f64, deviation: f64) -> f64 {
     mode + deviation * (f64::from(r.next_float()) - f64::from(r.next_float()))
+}
+/// `World.isMaterialInBB`: any block cell the box overlaps holds the fluid.
+/// Java walks `floor(min) .. floor(max + 1)`, so a box ending exactly on an
+/// integer still covers the cell that starts there.
+fn fluid_in_box(mut filled: impl FnMut(i32, i32, i32) -> bool, bb: Aabb) -> bool {
+    let lo = bb.min_position();
+    let hi = bb.max_position();
+    let range = |min: f64, max: f64| (min.floor() as i32)..((max + 1.0).floor() as i32);
+    for x in range(lo.x, hi.x) {
+        for y in range(lo.y, hi.y) {
+            for z in range(lo.z, hi.z) {
+                if filled(x, y, z) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+/// `FishingHook`'s water fraction: the box cut into five horizontal slices,
+/// each counted when any water is in it.
+fn water_fraction_of_box(mut filled: impl FnMut(i32, i32, i32) -> bool, bb: Aabb) -> f64 {
+    let (lo, hi) = (bb.min_position(), bb.max_position());
+    let mut fraction = 0.0;
+    for i in 0..5 {
+        let y0 = lo.y + (hi.y - lo.y) * f64::from(i) / 5.0;
+        let y1 = lo.y + (hi.y - lo.y) * f64::from(i + 1) / 5.0;
+        let slice = Aabb::new(Vec3::new(lo.x, y0, lo.z), Vec3::new(hi.x, y1, hi.z));
+        if fluid_in_box(&mut filled, slice) {
+            fraction += 1.0 / 5.0;
+        }
+    }
+    fraction
 }
 /// The stream a hook's draw comes from: `FishingHook` is an `Entity`, so 1.8
 /// gives it its own `random` and never touches the level's. 26.3's port drew
@@ -172,6 +208,7 @@ impl Game<'_> {
                 fish_angle: 0.0,
                 out_of_water: 0,
                 open_water: true,
+                airborne: 0,
                 luck,
                 lure,
                 random,
@@ -198,7 +235,14 @@ impl Game<'_> {
                 owner.y - hook.position.y,
                 owner.z - hook.position.z,
             );
-            let pulled = |v: Vec3| Vec3::new(v.x + d.x * 0.1, v.y + d.y * 0.1, v.z + d.z * 0.1);
+            // 1.8 adds `sqrt(distance) * 0.08` to the Y pull.
+            let lift = if horizon_core::target::is_1_8_9() {
+                (d.x * d.x + d.y * d.y + d.z * d.z).sqrt().sqrt() * 0.08
+            } else {
+                0.0
+            };
+            let pulled =
+                |v: Vec3| Vec3::new(v.x + d.x * 0.1, v.y + d.y * 0.1 + lift, v.z + d.z * 0.1);
             let mut hooked_item = false;
             if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
                 m.velocity = pulled(m.velocity);
@@ -209,7 +253,7 @@ impl Game<'_> {
                 // A player: the hub moves them when the tick ends.
                 self.creatures
                     .hook_pulls
-                    .push((id, Vec3::new(d.x * 0.1, d.y * 0.1, d.z * 0.1)));
+                    .push((id, Vec3::new(d.x * 0.1, d.y * 0.1 + lift, d.z * 0.1)));
             }
             // CriteriaTriggers.FISHING_ROD_HOOKED with no items.
             let hooked = self
@@ -220,8 +264,16 @@ impl Game<'_> {
             if let Some(hooked) = hooked {
                 self.trigger_fishing_rod_hooked(rod, &hooked, &[]);
             }
-            // `hookedIn instanceof ItemEntity ? 3 : 5`.
-            damage = if hooked_item { 3 } else { 5 };
+            // 1.8: `hookedEntity != null ? 3 : ...`; a caught entity is
+            // always 3, and items cannot be hooked at all. 26.3 makes it 5
+            // for an entity and 3 for an item.
+            damage = if horizon_core::target::is_1_8_9() {
+                3
+            } else if hooked_item {
+                3
+            } else {
+                5
+            };
         } else if hook.nibble > 0 {
             // 1.8 rolls its own pools: no open-water rule, and Luck of the Sea
             // and Lure shift the junk and treasure thresholds instead.
@@ -599,6 +651,10 @@ impl Game<'_> {
     }
     /// `FishingHook.tick`.
     pub(super) fn tick_fishing(&mut self) {
+        if horizon_core::target::is_1_8_9() {
+            self.tick_fishing_1_8_9();
+            return;
+        }
         let Some(mut h) = self.hook.take() else {
             return;
         };
@@ -794,6 +850,208 @@ impl Game<'_> {
             h.velocity.z * 0.92,
         );
         self.hook = Some(h);
+    }
+    /// `FishingHook.tick` as 1.8 runs it. The hook has no `Flying`/`Bobbing`
+    /// split: it moves every tick unless it just hit a block's face, where it
+    /// freezes for exactly one tick (1.8 reads its `xTile`/`yTile`/`zTile`
+    /// only from NBT and never writes them, so the "same block" test always
+    /// fails and releases it). Gravity is the `-0.04` a zero water fraction
+    /// adds at the end, and the drag is `0.92` in the air, `0.5` against a
+    /// wall or the ground, `0.9` of that in water.
+    fn tick_fishing_1_8_9(&mut self) {
+        let Some(mut h) = self.hook.take() else {
+            return;
+        };
+        let Some(p) = self.player.as_ref() else {
+            return;
+        };
+        let owner = p.position;
+        let alive = !p.health.dead_or_dying();
+        // shouldStopFishing: `getHeldItem()` is the main hand in 1.8, the
+        // angler must be alive and the hook within 32 blocks.
+        if !alive || !self.main_hand_rod() || owner.distance_squared(h.position) > 1024.0 {
+            return;
+        }
+        if self.lan_acting.is_none()
+            && matches!(h.state, State::Flying | State::Hooked(_))
+            && let Some(host) = self.lan.take()
+        {
+            self.refresh_hook_targets(&host);
+            self.lan = Some(host);
+        }
+        h.previous = h.position;
+        // `c != null`: ride what the hook is in, at 0.8 of its height.
+        if let State::Hooked(id) = h.state {
+            match self.hooked_entity(id) {
+                Some((at, height)) => {
+                    h.position = Vec3::new(at.x, at.y + height * 0.8, at.z);
+                    self.hook = Some(h);
+                    return;
+                }
+                None => h.state = State::Flying,
+            }
+        }
+        if h.on_ground {
+            // The landing tick froze it. 1.8's tile fields stayed at -1, so it
+            // always takes this branch: lose most of the motion and repeat the
+            // ray trace, which catches the block again next tick.
+            h.on_ground = false;
+            let (x, y, z) = {
+                let r = hook_rng(&mut h, &mut self.world.random);
+                (
+                    f64::from(r.next_float()),
+                    f64::from(r.next_float()),
+                    f64::from(r.next_float()),
+                )
+            };
+            h.velocity = Vec3::new(
+                h.velocity.x * x * 0.2,
+                h.velocity.y * y * 0.2,
+                h.velocity.z * z * 0.2,
+            );
+            h.life = 0;
+            h.airborne = 0;
+        } else {
+            h.airborne += 1;
+        }
+        // `world.rayTraceBlocks(from, from + motion)`: blocks only (water has
+        // no collision shape), before the move. A hit becomes the end of the
+        // entity ray too.
+        let from = h.position;
+        let to = from.add_vector(h.velocity);
+        let block_hit = {
+            let mut scene = SceneCollisions {
+                world: &self.world,
+                binding: self.collision,
+                subject: None,
+            };
+            traverse_blocks(from, to, 1024, |p: BlockPos| {
+                let state = self.world.block(p.x, p.y, p.z);
+                if self.res.facts().is_air(state) {
+                    return None;
+                }
+                let shape = self
+                    .collision
+                    .collision_shape(&mut scene, state, [p.x, p.y, p.z])
+                    .ok()?;
+                shape.clip(from, to, p)
+            })
+            .ok()
+            .flatten()
+        };
+        let end = block_hit.as_ref().map_or(to, |hit| hit.location);
+        // `getEntitiesInAABBexcluding`: living mobs and players whose expanded
+        // box the motion ray crosses; the thrower itself is skipped while the
+        // hook has been airborne under five ticks. 1.8's item entities return
+        // false from `attackEntityFrom`, so a dropped item never hooks.
+        let search = bounds(from)
+            .expand_towards(h.velocity)
+            .inflate(Vec3::new(1.0, 1.0, 1.0));
+        let mut hooked = None;
+        let mut best: Option<f64> = None;
+        {
+            let mut consider = |id: u32, bb: Aabb| {
+                if let Some(loc) = bb.inflate(Vec3::new(0.3, 0.3, 0.3)).clip(from, end) {
+                    let d = from.distance_squared(loc);
+                    if best.is_none_or(|b| d < b) {
+                        best = Some(d);
+                        hooked = Some(id);
+                    }
+                }
+            };
+            for m in self
+                .mobs
+                .iter()
+                .filter(|m| m.alive() && search.intersects(m.bounds()))
+            {
+                consider(m.id, m.bounds());
+            }
+            for t in self
+                .creatures
+                .hook_targets
+                .iter()
+                .filter(|t| search.intersects(t.bounds))
+            {
+                if h.airborne < 5 && t.conn == self.lan_acting {
+                    continue;
+                }
+                consider(t.id, t.bounds);
+            }
+        }
+        if let Some(id) = hooked {
+            h.state = State::Hooked(id);
+        } else if block_hit.is_some() {
+            h.on_ground = true;
+        }
+        if h.on_ground {
+            self.hook = Some(h);
+            return;
+        }
+        let mut friction = f64::from(0.92f32);
+        let mut scene = SceneCollisions {
+            world: &self.world,
+            binding: self.collision,
+            subject: None,
+        };
+        if let Ok(moved) = scene.resolve(bounds(h.position), h.velocity, 0.0, false) {
+            let horizontal =
+                (moved.x - h.velocity.x).abs() > 1.0e-7 || (moved.z - h.velocity.z).abs() > 1.0e-7;
+            h.on_ground = h.velocity.y < 0.0 && moved.y > h.velocity.y;
+            h.position = h.position.add_vector(moved);
+            // `this.C || this.D`: on the ground or stopped horizontally.
+            if h.on_ground || horizontal {
+                friction = f64::from(0.5f32);
+            }
+        }
+        let fraction = self.water_fraction(bounds(h.position));
+        if fraction > 0.0 {
+            let b = [
+                h.position.x.floor() as i32,
+                h.position.y.floor() as i32,
+                h.position.z.floor() as i32,
+            ];
+            self.catching_fish(&mut h, b);
+            if h.nibble > 0 {
+                let f = {
+                    let r = hook_rng(&mut h, &mut self.world.random);
+                    f64::from(r.next_float())
+                };
+                h.velocity.y -= f * f * f * 0.2;
+            }
+        }
+        h.velocity.y += f64::from(0.04f32) * (2.0 * fraction - 1.0);
+        if fraction > 0.0 {
+            friction *= f64::from(0.9f32);
+            h.velocity.y *= 0.8;
+        }
+        h.velocity = h.velocity.scale(friction);
+        self.hook = Some(h);
+    }
+    /// What a hooked hook rides: a living mob, or a player's box (1.8's
+    /// `EntityFishHook.caughtEntity`).
+    fn hooked_entity(&self, id: u32) -> Option<(Vec3, f64)> {
+        if let Some(m) = self.mobs.iter().find(|m| m.id == id && m.alive()) {
+            return Some((m.position, f64::from(m.height())));
+        }
+        self.creatures
+            .hook_targets
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| {
+                let (lo, hi) = (t.bounds.min_position(), t.bounds.max_position());
+                (
+                    Vec3::new((lo.x + hi.x) / 2.0, lo.y, (lo.z + hi.z) / 2.0),
+                    hi.y - lo.y,
+                )
+            })
+    }
+    /// `FishingHook`'s water fraction: the box cut into five horizontal
+    /// slices, each counted when any water is in it.
+    fn water_fraction(&self, bb: Aabb) -> f64 {
+        water_fraction_of_box(
+            |x, y, z| self.res.facts().get(self.world.block(x, y, z)).fluid == Fluid::Water,
+            bb,
+        )
     }
     /// The players a hook can catch: everyone but spectators and the dead
     /// (`Projectile.canHitEntity`), the host and the guests in the level.
@@ -1141,6 +1399,7 @@ impl Hook {
             fish_angle: 0.0,
             out_of_water: 0,
             open_water: true,
+            airborne: 0,
             luck: 0,
             lure: 0,
             // A tracked hook never ticks here, so its stream is unused.
@@ -1584,6 +1843,7 @@ mod tests {
             fish_angle: 0.0,
             out_of_water: 0,
             open_water: true,
+            airborne: 0,
             luck: 0,
             lure: 0,
             random: LegacyRandom::new(1234),
@@ -1628,6 +1888,28 @@ mod tests {
         assert_eq!(fishing_category_1_8_9(0.06, 0, 3), 0);
         assert_eq!(fishing_category_1_8_9(0.08, 0, 3), 1);
         assert_eq!(fishing_category_1_8_9(0.09, 0, 3), 2);
+    }
+
+    /// `World.isMaterialInBB` includes the cell a box ends exactly on, and
+    /// `FishingHook`'s fraction counts a slice when any cell in it is water.
+    #[test]
+    fn one_eight_hook_water_box_covers_its_boundary_cells() {
+        use super::{fluid_in_box, water_fraction_of_box};
+        use horizon_core::geometry::Aabb;
+        let bb = Aabb::new(Vec3::ZERO, Vec3::new(0.25, 0.25, 0.25));
+        assert!(fluid_in_box(|x, y, z| (x, y, z) == (0, 0, 0), bb));
+        // The box ends at 0.25, so the next cell is not touched.
+        assert!(!fluid_in_box(|x, _, _| x == 1, bb));
+        let edge = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+        // Java's `max + 1` covers the cell that starts on the max coordinate.
+        assert!(fluid_in_box(|x, y, z| (x, y, z) == (1, 1, 1), edge));
+        // One block tall: water in the bottom cell fills the bottom fifth,
+        // and the cell starting at y = 1 fills the top fifth.
+        let tall = Aabb::new(Vec3::ZERO, Vec3::new(0.25, 1.0, 0.25));
+        assert_eq!(water_fraction_of_box(|_, y, _| y == 0, tall), 0.2);
+        assert_eq!(water_fraction_of_box(|_, y, _| y == 1, tall), 0.2);
+        assert_eq!(water_fraction_of_box(|_, _, _| false, tall), 0.0);
+        assert_eq!(water_fraction_of_box(|_, _, _| true, tall), 1.0);
     }
 
     /// The 1.8 `EntityFishHook` static initialisers: fish weights total 100,
