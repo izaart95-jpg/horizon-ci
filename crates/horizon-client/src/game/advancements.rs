@@ -839,6 +839,8 @@ impl Game<'_> {
             return;
         }
         self.check_inventory_trigger();
+        // EntityPlayerMP.onUpdate: the exploration biome every 20 ticks.
+        self.tick_explore_all_biomes();
         // ServerPlayer.tick: PlayerTrigger.TICK every tick.
         let me = self.player_entity();
         self.trigger("minecraft:tick", |c, w| {

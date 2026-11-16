@@ -17,6 +17,10 @@ use std::{
 pub(super) struct Stats {
     pub(super) values: BTreeMap<String, BTreeMap<String, i32>>,
     pub(super) loaded: bool,
+    /// The 1.8 exploration biome ids visited for `exploreAllBiomes`.
+    /// Vanilla's `StatFileWriter` keeps this requirement set in memory
+    /// only, so it is not saved with the counters.
+    pub(super) biomes: BTreeSet<u8>,
     /// Ticks until the phantom spawner runs again.
     phantom_tick: i32,
     /// Statistic changes (type, key, amount; `None` = reset) for the

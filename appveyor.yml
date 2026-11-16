@@ -21,6 +21,7 @@ build_script:
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-items --lib enchant -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins finalize -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib finalize_1_8_9 -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins exploration -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib stations -j 2'
   - 'source "$HOME/.cargo/env" && cargo check -p horizon-client --example client_probe -j 2'
 

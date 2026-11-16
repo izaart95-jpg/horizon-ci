@@ -102,7 +102,8 @@
 >   Achievements are the 1.8 tree, screen and popup, and the code that
 >   simulates the world grants them: single player's server thread is the one
 >   running the criteria, so the popup and the tree fill in as in 1.8.
->   `exploreAllBiomes` waits for a 1.8 biome set.
+>   `exploreAllBiomes` records the 1.8 exploration biomes over the modern
+>   biome names.
 >
 > Stages 1–3, stage 4's registry and model set, stage 7's installer and the
 > client half of stage 5 are implemented; the rest is listed below. See
@@ -855,13 +856,20 @@ crafting and furnace takes through `onCraftedBy`, pickups
 (`onKillEntity`'s IMob, `EntitySkeleton.onDeath`'s 50-block arrow,
 `EntityGhast.attackEntityFrom`'s deflected fireball, `dropFewItems`' wither box),
 breeding, `EntityPig.fall`, beacons (`constructBeacon` and the fourth layer),
-portals, minecart rails, brewing, `overkill` and `openInventory`. Counters reach a
+portals, minecart rails, brewing, `overkill`, `openInventory` and
+`exploreAllBiomes`. Counters reach a
 window through the statistics answer, and a `horizon:achievements` payload carries
-them over the internal protocol, which has no achievement registry. Debt:
-`exploreAllBiomes` is unwired (Horizon's biome set is the modern one, not
-`BiomeGenBase.explorationBiomes`), a repeat End exit re-credits `theEnd2`
-instead of `portal`, and a spectator's `openInventory` is blocked by the client
-before the action is sent.
+them over the internal protocol, which has no achievement registry.
+`exploreAllBiomes` samples the biome at `(floor x, 0, floor z)` once a second,
+as `EntityPlayerMP.onUpdate` does, keeps the requirement set in memory as
+`StatFileWriter` does, and waits for its parent `theEnd` like
+`StatFileWriter.canUnlock`. `BiomeGenBase.explorationBiomes` names 36 ids, but ten
+are hill, plateau or shore variants the modern biome list folds into their base
+name (desert hills into the desert, ice mountains into the snowy plains, the
+mushroom shore into the mushroom fields, ...), so the achievement requires the
+26 name families a current world can show instead. Debt:
+a repeat End exit re-credits `theEnd2` instead of `portal`, and a spectator's
+`openInventory` is blocked by the client before the action is sent.
 
 The enchanting table draws from 1.8's own 25-entry `enchantmentsList`, not the
 26.3 `#minecraft:in_enchanting_table` tag (which adds Mending, Frost Walker and

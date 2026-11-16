@@ -14,6 +14,7 @@ use horizon_client::{
     ui,
     widgets::{self, ScreenInfo},
 };
+use horizon_core::geometry::Vec3;
 use horizon_core::random::{LegacyRandom, RandomSource};
 use horizon_world::nbt::Tag;
 use std::time::{Duration, Instant};
@@ -366,6 +367,28 @@ pub(super) const ACHIEVEMENTS: [Achievement; 34] = [
 /// The achievement a key names.
 pub(super) fn by_key(key: &str) -> Option<usize> {
     ACHIEVEMENTS.iter().position(|a| a.key == key)
+}
+
+/// `BiomeGenBase.explorationBiomes` (`ady.n`) as the current biomes name it.
+///
+/// Vanilla's set holds 36 biome ids: every registered base biome but the
+/// Nether, the End, the frozen ocean and the extreme hills edge. Ten of those
+/// are hill, plateau or shore variants that the current biome list folds into
+/// their base name (desert hills into the desert, ice mountains into the snowy
+/// plains, the mushroom shore into the mushroom fields, ...), and
+/// [`horizon_world::biome_1_8_9::legacy_biome_id`] names the base id for such
+/// a name, so those ten ids can never be visited here. Requiring one visit per
+/// remaining name family is the closest a current world can come and keeps
+/// the challenge completable.
+pub(super) const EXPLORATION_BIOMES_1_8_9: [u8; 26] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 14, 16, 21, 23, 24, 25, 26, 27, 29, 30, 32, 34, 35, 36, 37, 38,
+];
+
+/// `StatFileWriter.method_8302`: every required biome is in the set.
+fn explored_all(biomes: &std::collections::BTreeSet<u8>) -> bool {
+    EXPLORATION_BIOMES_1_8_9
+        .iter()
+        .all(|id| biomes.contains(id))
 }
 
 /// `StatHandler.method_8298`: the achievement is taken.
@@ -731,6 +754,34 @@ impl Game<'_> {
             return;
         }
         self.grant_achievement(key);
+    }
+    /// `EntityPlayerMP.onUpdate`'s exploration tick: once a second, while
+    /// `exploreAllBiomes` is untaken, record the biome at `(floor x, 0,
+    /// floor z)` - vanilla's `getBiomeGenForCoords` sample at y=0 - and grant
+    /// the challenge once every reachable 1.8 exploration biome is in the
+    /// set. `StatFileWriter` keeps the set per player and does not save it.
+    pub(super) fn tick_explore_all_biomes(&mut self) {
+        if !horizon_core::target::is_1_8_9()
+            || !self.ticks.is_multiple_of(20)
+            || self.stats.get("achievement", "exploreAllBiomes") > 0
+        {
+            return;
+        }
+        let Some(at) = self.player.as_ref().map(|p| p.position) else {
+            return;
+        };
+        let Some(name) = self.biome_name_at(Vec3::new(at.x.floor(), 0.0, at.z.floor())) else {
+            return;
+        };
+        let Some(id) = horizon_world::biome_1_8_9::legacy_biome_id(&name) else {
+            return;
+        };
+        self.stats.biomes.insert(id);
+        // `StatFileWriter.canUnlock`: the parent (`theEnd`) must be taken.
+        let unlocked = by_key("exploreAllBiomes").is_some_and(|i| unlockable(&self.stats, i));
+        if unlocked && explored_all(&self.stats.biomes) {
+            self.award_achievement("exploreAllBiomes");
+        }
     }
     /// `ItemStack.onCraftedBy`'s crafted counter, then the achievements
     /// `SlotCrafting.onTake` (`furnace == false`) or `SlotFurnace`'s take
@@ -1724,5 +1775,50 @@ mod tests {
         expected.extend_from_slice(b"overkill");
         expected.push(1);
         assert_eq!(payload.data, expected);
+    }
+
+    /// `BiomeGenBase.explorationBiomes` is 36 ids in vanilla; here the ten
+    /// hill, plateau and shore variants share their base name, so the 26
+    /// remaining ids are what [`horizon_world::biome_1_8_9::legacy_biome_id`]
+    /// can name, and every one of them must.
+    #[test]
+    fn one_eight_exploration_biomes_are_the_reachable_name_families() {
+        let mut sorted = EXPLORATION_BIOMES_1_8_9;
+        sorted.sort_unstable();
+        assert_eq!(sorted, EXPLORATION_BIOMES_1_8_9, "the set is sorted");
+        assert!(sorted.windows(2).all(|w| w[0] != w[1]), "no id repeats");
+        // The Nether, the End and the frozen ocean are not exploration
+        // biomes; the extreme hills edge and the ten folded variants are
+        // outside the reachable names.
+        for id in [8, 9, 10, 13, 15, 17, 18, 19, 20, 22, 28, 31, 33, 39] {
+            assert!(
+                !EXPLORATION_BIOMES_1_8_9.contains(&id),
+                "{id} must stay out"
+            );
+        }
+        for id in EXPLORATION_BIOMES_1_8_9 {
+            let name = horizon_world::biome_1_8_9::biome_name(id)
+                .unwrap_or_else(|| panic!("{id} is not a 1.8 biome"));
+            assert_eq!(
+                horizon_world::biome_1_8_9::legacy_biome_id(name),
+                Some(id),
+                "{name} names another id"
+            );
+        }
+    }
+
+    /// The challenge needs one visit per reachable family: every id, one
+    /// short, none. A Nether or End visit adds ids outside the set.
+    #[test]
+    fn one_eight_exploration_needs_every_reachable_biome() {
+        let all: std::collections::BTreeSet<u8> = EXPLORATION_BIOMES_1_8_9.into_iter().collect();
+        assert!(explored_all(&all));
+        for missing in EXPLORATION_BIOMES_1_8_9 {
+            let mut partial = all.clone();
+            partial.remove(&missing);
+            assert!(!explored_all(&partial), "without {missing}");
+        }
+        assert!(!explored_all(&std::collections::BTreeSet::new()));
+        assert!(!explored_all(&[8, 9].into_iter().collect()));
     }
 }

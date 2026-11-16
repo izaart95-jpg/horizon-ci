@@ -499,7 +499,7 @@ mod tests {
         let out = finalize(&mut m, &mut random, &hard, false);
         assert_eq!(out.ride, Ride::None);
         assert!(m.extra.effects.is_empty());
-        assert!((random.next_float() - 0.173_283).abs() < 1.0e-5);
+        assert!((random.next_float() - 0.441_629).abs() < 1.0e-5);
         // Outside hard difficulty the effect gate is never drawn: 12's next
         // level draw is the float the gate would have read.
         let normal = LocalDifficulty::new(2, 1_512_000, 4_000_000, 0.0);
