@@ -5,8 +5,9 @@
 //! bonus" to its follow range, then the species picks its variant, colour,
 //! size, age and gear. Vanilla gives each entity its own `Random`, so only
 //! the draws a species takes from the level's random join the level's
-//! sequence: a sheep's fleece colour, a villager's profession and a spider's
-//! jockey (the jockey is spawned with the mob, in `Game::spawn_jockeys`).
+//! sequence: a sheep's fleece colour, a villager's profession, a baby
+//! zombie's chicken jockey and a spider's jockey (the jockey is spawned with
+//! the mob, in `Game::spawn_jockeys`).
 //!
 //! Not ported yet: the 26.3-only conversion paths (a frog grown from a
 //! tadpole) still run the 26.3 finalize. Every 1.8 spawn path uses this one:
@@ -24,6 +25,21 @@ use horizon_core::random::RandomSource;
 /// librarian, priest, blacksmith and butcher.
 const PROFESSIONS_1_8_9: [u8; 5] = [5, 9, 4, 14, 2];
 
+/// What a 1.8 spawn rides: the two chicken-jockey rolls in
+/// `EntityZombie.onInitialSpawn`'s baby branch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Ride {
+    #[default]
+    None,
+    /// The caller makes a chicken at the mob, finalizes it and mounts the
+    /// mob on it.
+    New,
+    /// Ride the chicken this finalize created, at this index in `extra`.
+    Extra(usize),
+    /// Ride the first chicken in the 5x3x5 box around the mob.
+    Nearby,
+}
+
 /// What finalizing a 1.8 mob produced besides the mob itself.
 #[derive(Default)]
 pub struct Finalized {
@@ -32,8 +48,10 @@ pub struct Finalized {
     /// or `None` when it stays what it was.
     pub convert: Option<&'static str>,
     /// The entities `onInitialSpawn` spawned with it: the ocelot's two
-    /// kittens.
+    /// kittens, or the chicken a baby zombie jockey rides.
     pub extra: Vec<Mob>,
+    /// What the mob rides, if anything.
+    pub ride: Ride,
 }
 
 /// `EntityLiving.onInitialSpawn` and each species' override. Returns the
@@ -46,6 +64,7 @@ pub fn finalize(
 ) -> Finalized {
     use Species as S;
     let mut extra = Vec::new();
+    let mut ride = Ride::None;
     // `CaveSpider.onInitialSpawn` returns without calling its superclass, so
     // it alone misses the follow-range bonus.
     if m.species() != S::CaveSpider {
@@ -71,6 +90,7 @@ pub fn finalize(
                 return Finalized {
                     convert: Some("minecraft:donkey"),
                     extra,
+                    ride,
                 };
             }
             equine::finalize(m);
@@ -110,16 +130,20 @@ pub fn finalize(
             cube::set_size(m, 1 << scale);
         }
         S::Zombie => {
-            if zombie(m, d, world_random, false) {
+            let (villager, rolled) = zombie(m, d, world_random, false);
+            ride = rolled;
+            if villager {
                 return Finalized {
                     convert: Some("minecraft:zombie_villager"),
                     extra,
+                    ride,
                 };
             }
         }
         // A zombie villager the path above made keeps the zombie's rolls.
         S::ZombieVillager => {
-            zombie(m, d, world_random, false);
+            let (_, rolled) = zombie(m, d, world_random, false);
+            ride = rolled;
         }
         S::Skeleton => {
             // `EntitySkeleton.onInitialSpawn`: four nether skeletons in five
@@ -133,6 +157,7 @@ pub fn finalize(
                 return Finalized {
                     convert: Some("minecraft:wither_skeleton"),
                     extra,
+                    ride,
                 };
             }
             skeleton(m, d);
@@ -148,7 +173,8 @@ pub fn finalize(
         // and then clears the child flag; its own equipment override gives it
         // a golden sword (1.8 has no golden spear) and no armour.
         S::ZombifiedPiglin => {
-            zombie(m, d, world_random, true);
+            let (_, rolled) = zombie(m, d, world_random, true);
+            ride = rolled;
             finalize::set_age(m, 0);
         }
         // `EntityOcelot.onInitialSpawn`: one spawn in seven brings two
@@ -168,6 +194,7 @@ pub fn finalize(
     Finalized {
         convert: None,
         extra,
+        ride,
     }
 }
 
@@ -185,16 +212,17 @@ fn sheep_color(roll: i32, rare: i32) -> u8 {
 }
 
 /// `EntityZombie.onInitialSpawn`: loot picking, a baby or a villager one
-/// time in twenty each, doors, armour, enchantments, the halloween pumpkin
-/// and `handleAttributes`' knockback, follow range and leader bonuses. True
-/// when the zombie is a villager zombie. A pigman runs the same path with
-/// its own equipment override, which is the golden sword alone.
+/// time in twenty each, the baby's chicken jockey, doors, armour,
+/// enchantments, the halloween pumpkin and `handleAttributes`' knockback,
+/// follow range and leader bonuses. Returns whether the zombie is a villager
+/// zombie and what it rides. A pigman runs the same path with its own
+/// equipment override, which is the golden sword alone.
 fn zombie(
     m: &mut Mob,
     d: &LocalDifficulty,
     world_random: &mut impl RandomSource,
     pigman: bool,
-) -> bool {
+) -> (bool, Ride) {
     m.extra.pick_up_loot = m.random.next_float() < 0.55 * d.special();
     // The living data's two rolls are the level's, not the mob's.
     let baby = world_random.next_float() < 0.05;
@@ -202,6 +230,22 @@ fn zombie(
     if baby {
         finalize::set_age(m, -24000);
     }
+    // A baby zombie's chicken jockey: five in a hundred climb the first
+    // chicken within 5x3x5, else five in a hundred bring a new chicken and
+    // climb it. Both rolls are the level's, and the second only happens when
+    // the first misses; the chicken the second makes is finalized by the
+    // caller (its own random only).
+    let ride = if baby {
+        if world_random.next_float() < 0.05 {
+            Ride::Nearby
+        } else if world_random.next_float() < 0.05 {
+            Ride::New
+        } else {
+            Ride::None
+        }
+    } else {
+        Ride::None
+    };
     let can_break_doors = m.random.next_float() < d.special() * 0.1;
     doors::set_can_break_doors(m, can_break_doors);
     if pigman {
@@ -251,7 +295,7 @@ fn zombie(
         m.health = finalize::max_health(m);
         doors::set_can_break_doors(m, true);
     }
-    villager
+    (villager, ride)
 }
 
 /// The non-wither `EntitySkeleton.onInitialSpawn`: armour, a bow,
@@ -449,5 +493,45 @@ mod tests {
             finalize(&mut m, &mut LegacyRandom::new(0), &d, false);
             assert_eq!(m.extra.age, 0, "{at:?}");
         }
+    }
+
+    /// `EntityZombie.onInitialSpawn`'s chicken jockey: a baby zombie takes two
+    /// more draws from the level's random (the second only when the first
+    /// misses), taking the first chicken within 5x3x5 five in a hundred, else
+    /// bringing a new one five in a hundred.
+    #[test]
+    fn one_eight_baby_zombie_rolls_its_chicken_jockey() {
+        use horizon_core::random::LegacyRandom;
+        let d = LocalDifficulty::new(2, 0, 0, 1.0);
+        // 4640: baby (0.0492), then 0.0188 -> a nearby chicken. The next
+        // level draw is the fourth, because the second roll never happened.
+        let mut random = LegacyRandom::new(4640);
+        let mut m = zombie((0.5, 0.5));
+        let out = finalize(&mut m, &mut random, &d, false);
+        assert_eq!(m.extra.age, -24000);
+        assert_eq!(out.convert, None);
+        assert_eq!(out.ride, Ride::Nearby);
+        let next = random.next_float();
+        assert!((next - 0.118_392).abs() < 1.0e-5, "next draw {next}");
+        // 4716: baby, 0.9042 then 0.0016 -> a new chicken.
+        let mut random = LegacyRandom::new(4716);
+        let mut m = zombie((0.5, 0.5));
+        let out = finalize(&mut m, &mut random, &d, false);
+        assert_eq!(out.ride, Ride::New);
+        let next = random.next_float();
+        assert!((next - 0.283_580).abs() < 1.0e-5, "next draw {next}");
+        // 4641: baby, 0.1884 then 0.9195 -> no chicken, both rolls taken.
+        let mut random = LegacyRandom::new(4641);
+        let mut m = zombie((0.5, 0.5));
+        let out = finalize(&mut m, &mut random, &d, false);
+        assert_eq!(out.ride, Ride::None);
+        let next = random.next_float();
+        assert!((next - 0.511_274).abs() < 1.0e-5, "next draw {next}");
+        // An adult never rolls the jockey gates.
+        let mut random = LegacyRandom::new(0);
+        let mut m = zombie((0.5, 0.5));
+        let out = finalize(&mut m, &mut random, &d, false);
+        assert_eq!(out.ride, Ride::None);
+        assert!((random.next_float() - 0.240_536).abs() < 1.0e-5);
     }
 }

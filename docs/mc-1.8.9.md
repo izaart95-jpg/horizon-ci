@@ -788,13 +788,15 @@ one-in-five foal with 15..31 health, 0.1125..0.3375 speed and a 0.4..1.0 jump
 strength, the sheep's 5-in-100 black, grey and light grey plus 3-in-100 brown
 with the once-in-500 pink, the rabbit's six coats, the slime's 1/2/4 size (one
 step bigger half the time on harder difficulties), the villager's five
-professions, the zombie's loot picking, baby, villager zombie, door breaking,
-armour, pumpkin and `handleAttributes` bonuses (knockback resistance, follow
-range, the leader's reinforcements and health), and the skeleton's armour and
-bow or, four times in five in the nether, a wither skeleton with a stone sword
-and four attack damage, and the ocelot's one-in-seven pair of kittens, babies
-at the parent's position and facing. Sheep colour, villager profession, the
-ocelot's kittens and the spider's jockey draw on `World.random`, as in 1.8.
+professions, the zombie's loot picking, baby (with the baby's chicken
+jockey: the first chicken within 5×3×5, else a new one), villager zombie, door
+breaking, armour, pumpkin and `handleAttributes` bonuses (knockback
+resistance, follow range, the leader's reinforcements and health), and the
+skeleton's armour and bow or, four times in five in the nether, a wither
+skeleton with a stone sword and four attack damage, and the ocelot's
+one-in-seven pair of kittens, babies at the parent's position and facing.
+Sheep colour, villager profession, the ocelot's kittens, a baby zombie's
+chicken jockey and the spider's jockey draw on `World.random`, as in 1.8.
 The spawn gear is 1.8's too: `setEquipmentBasedOnDifficulty` gives the armour
 set, then `setEnchantmentBasedOnDifficulty` enchants the main hand and the
 feet, legs, chest and head from the mob's own random. The selection is

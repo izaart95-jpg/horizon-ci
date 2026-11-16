@@ -304,16 +304,20 @@ impl Game<'_> {
         let at = [m.position.x, m.position.y, m.position.z];
         match species {
             s if zombie_kind(s) && baby => {
-                if self.world.random.next_float() < CHICKEN_JOCKEY_ODDS {
-                    if let Some(chicken) = self.free_chicken_near(at) {
+                // 1.8's `EntityZombie.onInitialSpawn` rolls the chicken jockey
+                // itself, on the level's random, inside the finalize.
+                if !horizon_core::target::is_1_8_9() {
+                    if self.world.random.next_float() < CHICKEN_JOCKEY_ODDS {
+                        if let Some(chicken) = self.free_chicken_near(at) {
+                            self.make_chicken_jockey(chicken);
+                            self.mount_mob(id, chicken);
+                        }
+                    } else if self.world.random.next_float() < CHICKEN_JOCKEY_ODDS
+                        && let Some(chicken) = self.spawn_mob("minecraft:chicken", at, false)
+                    {
                         self.make_chicken_jockey(chicken);
                         self.mount_mob(id, chicken);
                     }
-                } else if self.world.random.next_float() < CHICKEN_JOCKEY_ODDS
-                    && let Some(chicken) = self.spawn_mob("minecraft:chicken", at, false)
-                {
-                    self.make_chicken_jockey(chicken);
-                    self.mount_mob(id, chicken);
                 }
             }
             // Spider.finalizeSpawn: one in a hundred carries a skeleton.

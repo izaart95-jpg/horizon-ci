@@ -39,6 +39,13 @@ pub(super) struct SpawnScratch {
     pub(super) seen: horizon_client::fast_hash::FxHashSet<(i32, i32)>,
 }
 
+/// What `Game::finalize_mob` produced: the entities the finalize spawned
+/// with the mob, and what the mob rides.
+pub(super) struct FinalizedSpawn {
+    pub(super) extra: Vec<Mob>,
+    pub(super) ride: horizon_client::mobs::finalize_1_8_9::Ride,
+}
+
 /// A player in the level in place, as spawning and despawning see it.
 pub(super) struct LevelPlayer {
     pub(super) position: Vec3,
@@ -180,9 +187,9 @@ impl GameLevel<'_, '_> {
     }
     /// `EntityMob`'s constructor plus `canSpawn`, `method_2469`, `initialize`
     /// and the second `method_2469` of `MobSpawnerHelper.tickSpawners`. The
-    /// mob is not added to the level when any check fails. Returns the
-    /// entities `onInitialSpawn` spawned with it (the ocelot's kittens) in
-    /// `extra`.
+    /// mob is not added to the level when any check fails. Returns the mob
+    /// and what it rides; the entities `onInitialSpawn` spawned with it (the
+    /// ocelot's kittens, a baby zombie's chicken) are appended to `extra`.
     fn build_mob_1_8_9(
         &self,
         entity: &str,
@@ -190,7 +197,8 @@ impl GameLevel<'_, '_> {
         yaw: f32,
         world_random: &mut LegacyRandom,
         extra: &mut Vec<Mob>,
-    ) -> Option<Mob> {
+    ) -> Option<(Mob, horizon_client::mobs::finalize_1_8_9::Ride)> {
+        use horizon_client::mobs::finalize_1_8_9::Ride;
         let kind = self.game.res.mob_types().get(entity)?.clone();
         let [x, y, z] = position;
         let mut mob = Mob::new(0, kind, Vec3::new(x, y, z), yaw);
@@ -201,12 +209,17 @@ impl GameLevel<'_, '_> {
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
-        let with = self.game.finalize_mob(&mut mob, world_random);
+        let out = self.game.finalize_mob(&mut mob, world_random);
         if !spawn18::method_2469(self, entity, mob.bounds()) {
             return None;
         }
-        extra.extend(with);
-        Some(mob)
+        let base = extra.len();
+        let ride = match out.ride {
+            Ride::Extra(k) => Ride::Extra(base + k),
+            other => other,
+        };
+        extra.extend(out.extra);
+        Some((mob, ride))
     }
 }
 impl SpawnLevel for GameLevel<'_, '_> {
@@ -485,6 +498,7 @@ fn spawn_chunk_1_8_9(
     cz: i32,
     random: &mut LegacyRandom,
     pending: &mut Vec<Mob>,
+    rides: &mut Vec<(usize, horizon_client::mobs::finalize_1_8_9::Ride)>,
 ) -> (i32, i32) {
     let [base_x, base_y, base_z] = spawn18::find_spawn_location(l, cx, cz, random);
     // A picked full-cube block skips the whole chunk.
@@ -540,7 +554,7 @@ fn spawn_chunk_1_8_9(
             }
             let yaw = random.next_float() * 360.0;
             let mut kittens = Vec::new();
-            let Some(mob) =
+            let Some((mob, ride)) =
                 l.build_mob_1_8_9(picked.entity, [fx, fy, fz], yaw, random, &mut kittens)
             else {
                 // The failed try still contributes the running count below,
@@ -550,7 +564,9 @@ fn spawn_chunk_1_8_9(
             };
             let bounds = mob.bounds();
             l.pending.borrow_mut().push(bounds);
+            let base = pending.len();
             pending.push(mob);
+            rides.push((base, ride));
             // `onInitialSpawn` spawned them with the mob, at its position.
             for kitten in kittens {
                 l.pending.borrow_mut().push(kitten.bounds());
@@ -746,12 +762,14 @@ impl<'a> Game<'a> {
     /// at its feet and the local difficulty. 1.8's `onInitialSpawn` also
     /// reads the level's random (a sheep's fleece colour and a villager's
     /// profession), can turn the mob into another species, and can spawn
-    /// entities with it (the ocelot's kittens), which are returned.
+    /// entities with it (the ocelot's kittens, a baby zombie's chicken),
+    /// which are returned.
     pub(super) fn finalize_mob(
         &self,
         mob: &mut Mob,
         world_random: &mut impl RandomSource,
-    ) -> Vec<Mob> {
+    ) -> FinalizedSpawn {
+        use horizon_client::mobs::finalize_1_8_9::Ride;
         let p = mob.position;
         let difficulty = self.local_difficulty([p.x, p.y, p.z]);
         if horizon_core::target::is_1_8_9() {
@@ -776,11 +794,68 @@ impl<'a> Game<'a> {
                     );
                 }
             }
-            return out.extra;
+            let mut extra = out.extra;
+            let mut ride = out.ride;
+            // `EntityZombie.onInitialSpawn`: the second five-in-a-hundred
+            // roll brings a chicken at the zombie's position and facing,
+            // which is finalized and flagged as a jockey.
+            if ride == Ride::New {
+                ride = Ride::None;
+                if let Some(kind) = self.res.mob_types().get("minecraft:chicken").cloned() {
+                    let mut chicken = Mob::new(0, kind, mob.position, mob.yaw);
+                    let _ = self.finalize_mob(&mut chicken, world_random);
+                    chicken.extra.jockey = true;
+                    extra.push(chicken);
+                    ride = Ride::Extra(extra.len() - 1);
+                }
+            }
+            return FinalizedSpawn { extra, ride };
         }
         let facts = self.biome_facts(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
         horizon_client::mobs::spawning::finalize(mob, &facts, &difficulty);
-        Vec::new()
+        FinalizedSpawn {
+            extra: Vec::new(),
+            ride: Ride::None,
+        }
+    }
+    /// Applies a 1.8 finalize's ride. `vehicle` is the id of the entity a
+    /// `Ride::Extra` named (the caller added it); `Ride::Nearby` takes the
+    /// first chicken in the 5x3x5 box, as `EntityZombie.onInitialSpawn`
+    /// does. The chicken becomes a jockey (`setChickenJockey`).
+    pub(super) fn apply_ride(
+        &mut self,
+        rider: u32,
+        ride: horizon_client::mobs::finalize_1_8_9::Ride,
+        vehicle: Option<u32>,
+    ) {
+        use horizon_client::mobs::finalize_1_8_9::Ride;
+        let vehicle = match ride {
+            Ride::None | Ride::New => return,
+            Ride::Extra(_) => vehicle,
+            Ride::Nearby => {
+                let Some(area) = self
+                    .mobs
+                    .iter()
+                    .find(|m| m.id == rider)
+                    .map(|m| m.bounds().inflate(Vec3::new(5.0, 3.0, 5.0)))
+                else {
+                    return;
+                };
+                self.mobs
+                    .iter()
+                    .find(|m| {
+                        m.id < rider
+                            && m.species() == Species::Chicken
+                            && m.bounds().intersects(area)
+                    })
+                    .map(|m| m.id)
+            }
+        };
+        let Some(vehicle) = vehicle else { return };
+        if let Some(chicken) = self.mobs.iter_mut().find(|m| m.id == vehicle) {
+            chicken.extra.jockey = true;
+        }
+        self.mount_mob(rider, vehicle);
     }
     /// Creates a mob the spawner accepted, finalized the game's way; the
     /// caller adds it with [`Game::add_spawned`].
@@ -802,12 +877,15 @@ impl<'a> Game<'a> {
         })
     }
     /// Adds the mobs a spawn pass created: ids, enchanted gear and jockeys.
-    fn add_spawned(&mut self, pending: Vec<Mob>, persistent: bool) {
+    /// Returns the ids in `pending` order, for the rides a finalize planned.
+    fn add_spawned(&mut self, pending: Vec<Mob>, persistent: bool) -> Vec<u32> {
+        let mut ids = Vec::with_capacity(pending.len());
         for mut mob in pending {
             self.next_entity += 1;
             mob.id = self.next_entity;
             mob.persistent = persistent;
             let id = mob.id;
+            ids.push(id);
             self.mobs.push(mob);
             self.native_mobs_joined(self.mobs.len() - 1, true);
             // 1.8's `setEnchantmentBasedOnDifficulty` runs inside the
@@ -960,6 +1038,7 @@ impl<'a> Game<'a> {
         let counted = self.spawning_chunks_1_8_9(&players, &mut scratch);
         let mut random = std::mem::replace(&mut self.world.random, LegacyRandom::new(0));
         let mut pending = Vec::new();
+        let mut rides = Vec::new();
         let mut counts = [0i32; 8];
         {
             let level = self.natural_level();
@@ -984,13 +1063,32 @@ impl<'a> Game<'a> {
                 };
                 counts[slot] = n;
                 for &(cx, cz) in &scratch.candidates {
-                    spawn_chunk_1_8_9(&level, category, cx, cz, &mut random, &mut pending);
+                    spawn_chunk_1_8_9(
+                        &level,
+                        category,
+                        cx,
+                        cz,
+                        &mut random,
+                        &mut pending,
+                        &mut rides,
+                    );
                 }
             }
         }
         self.world.random = random;
         self.spawn_counts.insert(self.dim, (counted, counts));
-        self.add_spawned(pending, false);
+        let ids = self.add_spawned(pending, false);
+        for (base, ride) in rides {
+            let vehicle = match ride {
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => {
+                    ids.get(base + 1 + k).copied()
+                }
+                _ => None,
+            };
+            if let Some(&rider) = ids.get(base) {
+                self.apply_ride(rider, ride, vehicle);
+            }
+        }
         self.spawn_scratch = scratch;
     }
     /// `ServerChunkCache.tickChunks`: the spawn state over the loaded mobs,
@@ -1182,6 +1280,7 @@ impl<'a> Game<'a> {
         random.set_decoration_seed_1_8_9(self.level.seed, cx, cz);
         let mut world_random = std::mem::replace(&mut self.world.random, LegacyRandom::new(0));
         let mut pending = Vec::new();
+        let mut rides = Vec::new();
         {
             let level = self.natural_level();
             let mut spawn = |_: &GameLevel,
@@ -1198,9 +1297,11 @@ impl<'a> Game<'a> {
                     Vec3::new(position[0], position[1], position[2]),
                     yaw,
                 );
-                let kittens = self.finalize_mob(&mut mob, world_random);
+                let out = self.finalize_mob(&mut mob, world_random);
+                let base = pending.len();
                 pending.push(mob);
-                pending.extend(kittens);
+                rides.push((base, out.ride));
+                pending.extend(out.extra);
                 true
             };
             spawn18::spawn_mobs_for_chunk_generation(
@@ -1214,6 +1315,17 @@ impl<'a> Game<'a> {
             );
         }
         self.world.random = world_random;
-        self.add_spawned(pending, false);
+        let ids = self.add_spawned(pending, false);
+        for (base, ride) in rides {
+            let vehicle = match ride {
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => {
+                    ids.get(base + 1 + k).copied()
+                }
+                _ => None,
+            };
+            if let Some(&rider) = ids.get(base) {
+                self.apply_ride(rider, ride, vehicle);
+            }
+        }
     }
 }

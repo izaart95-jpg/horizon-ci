@@ -367,6 +367,7 @@ pub fn main() -> Result<()> {
             lid: &|_| open,
             sign: &|_| sign.as_ref(),
             banner: &|_| layers.clone(),
+            banner_base: &|_| None,
             skull: &|_| None,
             glyph: &|c| atlas.glyph_cell(c),
             glyphs: atlas.font.epoch(),

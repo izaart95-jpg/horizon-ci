@@ -278,7 +278,7 @@ pub fn main() -> horizon_client::Result<()> {
                 "fire" => damage("minecraft:on_fire", None, None),
                 _ => damage("minecraft:generic", None, None),
             };
-            let death = drops::Death {
+            let mut death = drops::Death {
                 loot: &loot,
                 damage: Some(source),
                 player: player.filter(|_| pkill),
@@ -286,8 +286,9 @@ pub fn main() -> horizon_client::Result<()> {
                 vehicle: c.get("vehicle").map(|v| LootEntity::new(v)),
                 mob_drops: true,
                 world_seed,
+                world_random: Some(&mut level_random),
             };
-            let (items, _) = drops::die(&mut m, &death, &mut sequences);
+            let (items, _) = drops::die(&mut m, &mut death, &mut sequences);
             for d in items {
                 let _ = match d {
                     drops::Drop::Item(s) => writeln!(out, "{}", line(&s)),

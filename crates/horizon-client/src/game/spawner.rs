@@ -22,9 +22,14 @@ type Pos = (i32, i32, i32);
 /// What a spawner tick decided to add, created once the level is free.
 pub(super) enum Planned {
     /// `finalizeSpawn` ran on a fresh mob; the entities `onInitialSpawn`
-    /// spawned with it (the ocelot's kittens), and the spawn data's
-    /// `equipment`.
-    Finalized(Mob, Vec<Mob>, Option<Tag>),
+    /// spawned with it (the ocelot's kittens, a jockey's chicken), what it
+    /// rides, and the spawn data's `equipment`.
+    Finalized(
+        Mob,
+        Vec<Mob>,
+        horizon_client::mobs::finalize_1_8_9::Ride,
+        Option<Tag>,
+    ),
     /// A mob loaded from the spawn data (with its passengers) and its
     /// `equipment`.
     Loaded(Tag, Option<Tag>),
@@ -144,7 +149,7 @@ impl Game<'_> {
         for (i, plan) in planned.into_iter().enumerate() {
             let provisional = u32::MAX - i as u32;
             let id = match plan {
-                Planned::Finalized(mut mob, extra, equipment) => {
+                Planned::Finalized(mut mob, extra, ride, equipment) => {
                     self.next_entity += 1;
                     mob.id = self.next_entity;
                     let id = mob.id;
@@ -153,13 +158,23 @@ impl Game<'_> {
                     if horizon_core::target::is_1_8_9() {
                         // `onInitialSpawn` already enchanted the gear and
                         // rolled the pumpkin, and may have spawned the
-                        // ocelot's kittens with the parent.
+                        // ocelot's kittens or a jockey's chicken with the
+                        // parent.
+                        let mut extra_ids = Vec::new();
                         for mut kitten in extra {
                             self.next_entity += 1;
                             kitten.id = self.next_entity;
+                            extra_ids.push(kitten.id);
                             self.mobs.push(kitten);
                             self.native_mobs_joined(self.mobs.len() - 1, false);
                         }
+                        let vehicle = match ride {
+                            horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => {
+                                extra_ids.get(k).copied()
+                            }
+                            _ => None,
+                        };
+                        self.apply_ride(id, ride, vehicle);
                     } else {
                         self.enchant_spawn_equipment(id);
                         self.halloween_spawn_head(id);
@@ -197,7 +212,7 @@ impl Game<'_> {
             let mut mob = Mob::new(0, kind, at, r.yaw);
             let mut fallback = horizon_core::random::LegacyRandom::new(0);
             let world_random = world_random.unwrap_or(&mut fallback);
-            let extra = self.finalize_mob(&mut mob, world_random);
+            let out = self.finalize_mob(&mut mob, world_random);
             // TrialSpawner.spawnMob: setPersistenceRequired.
             mob.persistent = r.trial;
             // 1.8's finalize ran the species' own `onInitialSpawn`, which has
@@ -218,7 +233,12 @@ impl Game<'_> {
                 }
             }
             let bounds = mob.bounds();
-            planned.push(Planned::Finalized(mob, extra, r.equipment.cloned()));
+            planned.push(Planned::Finalized(
+                mob,
+                out.extra,
+                out.ride,
+                r.equipment.cloned(),
+            ));
             bounds
         } else {
             // A UUID already in the level is refused.

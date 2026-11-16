@@ -397,7 +397,7 @@ impl Game<'_> {
         // villager profession, the ocelot's kittens); the 26.3 finalize only
         // needs the biome facts, which the same call takes.
         let mut random = self.world.random.clone();
-        let extra = self.finalize_mob(&mut mob, &mut random);
+        let out = self.finalize_mob(&mut mob, &mut random);
         self.world.random = random;
         if !scripted {
             let reason = if persistent {
@@ -411,14 +411,22 @@ impl Game<'_> {
         self.mobs.push(mob);
         self.native_mobs_joined(self.mobs.len() - 1, false);
         // 1.8's finalize already enchanted the gear and rolled the pumpkin,
-        // and may have spawned the ocelot's kittens with the parent.
+        // and may have spawned the ocelot's kittens or a jockey's chicken
+        // with the parent.
         if horizon_core::target::is_1_8_9() {
-            for mut kitten in extra {
+            let mut extra_ids = Vec::new();
+            for mut kitten in out.extra {
                 self.next_entity += 1;
                 kitten.id = self.next_entity;
+                extra_ids.push(kitten.id);
                 self.mobs.push(kitten);
                 self.native_mobs_joined(self.mobs.len() - 1, false);
             }
+            let vehicle = match out.ride {
+                horizon_client::mobs::finalize_1_8_9::Ride::Extra(k) => extra_ids.get(k).copied(),
+                _ => None,
+            };
+            self.apply_ride(id, out.ride, vehicle);
         } else {
             self.enchant_spawn_equipment(id);
             self.halloween_spawn_head(id);
