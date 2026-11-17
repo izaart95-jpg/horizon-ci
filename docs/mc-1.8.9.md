@@ -963,6 +963,24 @@ components say they are; two damaged items of the same kind still combine.
 
 ### 6. Single-player world generation
 
+The 1.8.9 biome-selection chain is ported in
+`crates/horizon-world/src/biome_layer_1_8_9.rs` (`BiomeLayers18`): the
+`Layer.init` island, climate, hills, rare-biome, zoom, shore, smooth and river
+layers, the Voronoi zoom, the per-cell `Layer.method_145` seed rebase and the
+1.8 biome class/temperature tables. The fixture
+`crates/horizon-world/tests/fixtures/biome_layers_1_8_9.txt` holds 30 outputs
+from `LayerOracle18` against the merged named 1.8.9 jar (five default-generator
+seeds and one large-biomes seed, each at two 16x16 Voronoi chunk origins, a
+small negative Voronoi origin, and the generator's 10x10 and 5x3 river-layer
+neighbourhoods); `matches_the_one_eight_nine_layer_chain` compares all of them.
+One 1.8 quirk the port models: `AddHillsLayer` never seeds its `field_7604`
+rarity parent, so the two zooms above the shared rarity layer keep
+`field_173 == 0`, while the rarity base itself is seeded through the river
+branch.
+
+The chain is not yet the generator's biome source. Terrain, caves, features and
+structures still come from the 26.3 generator (see the debt below).
+
 Port the 1.8 terrain generator, biome selection, caves, features and
 structures. For a server-first cut this can come after stages 1–5; single-player
 is not playable without it.
@@ -989,6 +1007,10 @@ Known 1.8 debt, in the order it should be paid:
 - World generation still runs the 26.3 generator with 1.8 block tables
   projected onto it (stage 6). Terrain, caves, features and structures are not
   yet 1.8 algorithms, so seed-for-seed parity with a 1.8.9 server is not there.
+- 1.8 biome selection is ported and oracle-tested (`biome_layer_1_8_9.rs`) but
+  not wired in: `LayeredBiomeSource` still asks the 26.3 generator, so a 1.8
+  seed's biome layout is not the 1.8 one until the terrain generator is ported
+  too (stage 6).
 - The item registry and creative tabs are 1.8's (566 items, the twelve
   `ItemGroup` tabs generated from the real jar). The
   per-tick spawn rules, generation mob packs and the remaining `data/` trees
@@ -1084,6 +1106,7 @@ Last full run in this tree (Linux, `--no-default-features` for the client):
 | `cargo test -p horizon-client-render --lib one_eight_splash_keeps_the_stacks_own_nbt` | passed: the splash transmute keeps the custom name and the custom speed effect |
 | `cargo test -p horizon-items --lib a_custom_potion_keeps_its_effects_in_1_8_nbt` | passed: `Id` 1, `Amplifier` 1, `Duration` 200, `Ambient` 0, `ShowParticles` 1, and the reader gives the effect back |
 | `cargo test -p horizon-client-core --lib lang::tests` | 10 passed (the Russian, German and Chinese bundles, the 1.8 `.lang` parser, a locale's legacy enchantment keys and item names, a composed spawn egg, the English fallback) |
+| `cargo test -p horizon-world --lib biome_layer_1_8_9` | 3 passed (30 oracle cases against the named 1.8.9 jar: five default seeds and one large-biomes seed, 16x16 Voronoi chunk origins and the 10x10/5x3 river neighbourhoods) |
 
 Run `horizon-client-render` serially: its GPU tests can crash when several run
 at once. The ignored tests need prepared resources.
