@@ -16,7 +16,7 @@ use super::{
     },
     biome::BiomeId,
     biome_chunk::{BiomeChunk, BiomeRegion},
-    biome_source::{BiomeSourceCatalog, ResolvedBiomeSource},
+    biome_source::{BiomeSourceCatalog, LayerBiomeSource18, ResolvedBiomeSource},
     biome_temperature::{BiomeTemperature, BiomeTemperatureSettings},
     carver::{CarverCatalog, WorldCarver, generate_carving_mask},
     carving::{CarvingBlocks, apply_carving_mask},
@@ -97,6 +97,26 @@ fn stage<E: std::fmt::Display>(name: &'static str) -> impl FnOnce(E) -> Generato
 }
 fn resource(message: impl Into<String>) -> GeneratorError {
     GeneratorError::Resource(message.into())
+}
+
+/// The 1.8.9 overworld source for a world preset, when this build and
+/// dimension take one: `Layer.init`'s chain, with `biomeSize = 6` for
+/// `WorldType.LARGE_BIOMES`. 1.8's `DEFAULT`, `LARGE_BIOMES` and `AMPLIFIED`
+/// share the chain (they differ in terrain); the Nether and the End are one
+/// biome in 1.8, and superflat, debug and a fixed-biome preset keep the data
+/// pack's source.
+fn one_eight_biomes(preset: &str, dimension: &str, seed: i64) -> Option<LayerBiomeSource18> {
+    let layered = matches!(
+        preset,
+        "minecraft:normal" | "minecraft:large_biomes" | "minecraft:amplified"
+    );
+    (horizon_core::target::is_1_8_9() && dimension == "minecraft:overworld" && layered).then(|| {
+        if preset == "minecraft:large_biomes" {
+            LayerBiomeSource18::large_biomes(seed)
+        } else {
+            LayerBiomeSource18::new(seed)
+        }
+    })
 }
 
 /// Heightmap-relevant block behavior, one entry per registry state.
@@ -647,6 +667,13 @@ impl GeneratorData {
             .decode(&source_json)?
             .resolve(&self.presets)
             .map_err(|e| resource(format!("biome source: {e}")))?;
+        // The slot is keyed by the data pack's source JSON, so the preloaded
+        // decoration must come from the source the world will use. Decoration
+        // depends on the source's biome set, not its seed.
+        let source = match one_eight_biomes(preset, dimension, 0) {
+            Some(source) => ResolvedBiomeSource::OneEight(source),
+            None => source,
+        };
         self.decoration_for(&source_json, &source).map(drop)
     }
     pub fn registry(&self) -> &'static BlockRegistry {
@@ -904,6 +931,9 @@ struct Pipeline<R: RandomSource> {
     extensions: MaterialExtensions<R::Positional>,
     picker: GlobalFluidPicker,
     zoom: BiomeZoom,
+    /// This pipeline's biomes come from the 1.8.9 layer chain: they are
+    /// already block-resolution, so `BiomeZoom` does not apply.
+    one_eight: bool,
     biome_cache: BiomeCache,
     biome_work: ChunkWork,
     carver_cache: Mutex<HashMap<(i32, i32), BiomeId>>,
@@ -1011,6 +1041,7 @@ where
         settings_json: &Value,
         with_structures: bool,
         level: Option<(i32, i32)>,
+        biomes_1_8_9: Option<LayerBiomeSource18>,
     ) -> Result<Self, GeneratorError> {
         let registry = data.registry;
         let noise = &settings_json["noise"];
@@ -1118,6 +1149,13 @@ where
             .decode(&source_json)?
             .resolve(&data.presets)
             .map_err(|e| resource(format!("biome source: {e}")))?;
+        // A 1.8.9 overworld has no climate parameters: `WorldChunkManager`
+        // answers every query from the `Layer.init` chain.
+        let one_eight = biomes_1_8_9.is_some();
+        let source = match biomes_1_8_9 {
+            Some(source) => ResolvedBiomeSource::OneEight(source),
+            None => source,
+        };
         let climate = router.climate_sampler();
         let mut noises = BTreeMap::new();
         for (name, json) in &data.noises {
@@ -1172,6 +1210,7 @@ where
         );
         let mut pipeline = Self {
             zoom: BiomeZoom::new(obfuscate_seed(seed)),
+            one_eight,
             data,
             seed,
             settings,
@@ -1234,6 +1273,11 @@ where
     }
     /// `Blender.of(region)` for the chunk at `pos`.
     fn blender_at(&self, pos: ChunkPos) -> Arc<super::blending::Blender> {
+        // 1.8 has no old-chunk blending: a new chunk next to a saved one
+        // starts as the layer chain and the noise say, seams included.
+        if self.one_eight {
+            return Arc::new(super::blending::Blender::empty());
+        }
         // `SharedConstants.DEBUG_DISABLE_BLENDING`.
         static DISABLED: OnceLock<bool> = OnceLock::new();
         if *DISABLED.get_or_init(|| std::env::var_os("HORIZON_DISABLE_BLENDING").is_some()) {
@@ -1243,6 +1287,16 @@ where
             Some(world) => super::blending::Blender::of(world.as_ref(), pos),
             None => super::blending::Blender::empty(),
         })
+    }
+    /// The quart a block's biome comes from. 26.3 quarters its
+    /// quart-resolution biomes with `BiomeZoom`; 1.8's chain already answers
+    /// per block, and a chunk stores that answer in the block's quart.
+    fn quart_at_block(&self, block: BlockPos) -> [i32; 3] {
+        if self.one_eight {
+            [block.x >> 2, block.y >> 2, block.z >> 2]
+        } else {
+            self.zoom.quart_at_block(block)
+        }
     }
     fn biome_chunk(
         &self,
@@ -2224,7 +2278,7 @@ impl<R: RandomSource> MaterialSurfaceQueries for SurfaceQueries<'_, '_, R> {
             },
             Biomes::Resolver(resolver, context) => {
                 let name = resolver
-                    .sample(context, self.pipeline.zoom.quart_at_block(p))
+                    .sample(context, self.pipeline.quart_at_block(p))
                     .map_err(|_| MaterialRuleError::BiomeQueryFailed)?;
                 data.biome_id(name).ok_or(MaterialRuleError::MissingBiome)?
             }
@@ -2233,7 +2287,7 @@ impl<R: RandomSource> MaterialSurfaceQueries for SurfaceQueries<'_, '_, R> {
                 resolver,
                 context,
                 memo,
-                self.pipeline.zoom.quart_at_block(p),
+                self.pipeline.quart_at_block(p),
             )?,
         };
         Ok(Some(id.0))
@@ -2690,7 +2744,7 @@ where
         // Use a fresh bounded context: far samples must not grow the chunk/structure caches.
         let mut biome_context = SamplerContext::default();
         let biome = resolver
-            .sample(&mut biome_context, self.zoom.quart_at_block(position))
+            .sample(&mut biome_context, self.quart_at_block(position))
             .ok()?;
         let biome = self.data.biome_id(biome)?;
         let volume = DensityVolume::new([1; 3], [x, y, z], [1; 3]).ok()?;
@@ -2940,7 +2994,7 @@ where
                         &mut resolver,
                         &mut biome_context,
                         &mut biome_memo,
-                        self.zoom.quart_at_block(BlockPos::new(wx, height - 1, wz)),
+                        self.quart_at_block(BlockPos::new(wx, height - 1, wz)),
                     )
                     .map_err(stage("far biome"))?
                 } else {
@@ -3252,6 +3306,7 @@ impl OverworldGenerator {
             &settings_json,
             structures,
             Some((level_min_y, level_height)),
+            None,
         )?;
         let mut states = Vec::new();
         let mut null = Vec::new();
@@ -3369,6 +3424,11 @@ impl OverworldGenerator {
                 noise_clamped = Some((noise, clamped));
             }
         }
+        // A 1.8.9 overworld takes its biomes from the layer chain
+        // (`WorldType.LARGE_BIOMES` is its `biomeSize = 6`). The Nether and
+        // the End are one biome in 1.8 and keep the data pack's source;
+        // superflat and a fixed-biome preset keep theirs.
+        let biomes_1_8_9 = one_eight_biomes(preset, dimension, seed);
         let pipeline: Arc<dyn SeededPipeline> = if settings_json["legacy_random_source"]
             .as_bool()
             .unwrap_or(false)
@@ -3381,6 +3441,7 @@ impl OverworldGenerator {
                 &settings_json,
                 with_structures,
                 level,
+                biomes_1_8_9,
             )?)
         } else {
             Arc::new(Pipeline::new(
@@ -3391,6 +3452,7 @@ impl OverworldGenerator {
                 &settings_json,
                 with_structures,
                 level,
+                biomes_1_8_9,
             )?)
         };
         Ok(Self {
@@ -3743,6 +3805,7 @@ mod tests {
             &preset["dimensions"]["minecraft:the_end"]["generator"],
             &settings,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -4310,6 +4373,7 @@ mod tests {
                 &settings,
                 true,
                 Some((-64, 384)),
+                None,
             )
             .expect("pipeline"),
         );

@@ -88,12 +88,13 @@
 >   in `biome_spawns_1_8_9.rs` and `mobs/spawn_1_8_9.rs`. A 1.8 world no longer
 >   spawns foxes, pandas, goats, axolotls, fish or other post-1.8 mobs because
 >   the lists are 1.8's, not because 26.3's were filtered.
->   Debt: which biome a column has still comes from the 26.3 generator, a
->   chunk's decoration random stream is still 26.3's (so the packs the
->   generator places afterwards cannot be seed-identical yet), and 1.8
->   village generation is unported; a dedicated server honours its
->   `spawn-animals`/`spawn-monsters` properties, while single player follows
->   the difficulty (monsters above peaceful, animals always).
+>   Debt: a chunk's decoration random stream is still 26.3's (so the
+>   packs the generator places afterwards cannot be seed-identical yet), and
+>   1.8 village generation is unported. Which biome a column has now comes from
+>   the 1.8 layer chain (stage 6), so the spawn lists see 1.8 biomes. A
+>   dedicated server honours its `spawn-animals`/`spawn-monsters` properties,
+>   while single player follows the difficulty (monsters above peaceful,
+>   animals always).
 - **Some 1.8 screens are still 26.3 layouts.** The title screen, options,
 >   create-world, the in-game HUD, the pause menu and its "Open to LAN" screen
 >   use 1.8 layouts. 1.8 has no world-options screen, so the pause menu does
@@ -665,10 +666,10 @@ return false from `attackEntityFrom`), a hit block freezes it for one tick
 because 1.8 never writes `xTile`/`yTile`/`zTile`, the drag is `0.92` (`0.5`
 against a wall or the ground, `0.9` of that in water), the five-slice water
 fraction adds `0.04 * (2f - 1)` to the motion every tick (`-0.04` in air), and
-reeling pulls with `sqrt(distance) * 0.08` on Y for 3 rod damage. Debt: in
-single player without LAN there is no host target, so the thrower's own body
-is not hookable, and a hook's `new Random()` is not seed-reproducible in
-vanilla either.
+reeling pulls with `sqrt(distance) * 0.08` on Y for 3 rod damage. Debt: a hook's
+`new Random()` is not seed-reproducible in vanilla either, and the deprecated
+in-frame path (`--in-frame`) has no `LanHost`, so a solo angler there cannot be
+hooked; single player runs on the server thread, whose host is a target.
 
 Block drops are 1.8's code, not the 26.3 loot tables. `tools/BlockDropProbe18.java`
 dumps every 1.8 state (7,806 states) and
@@ -888,9 +889,10 @@ sorting, item and header tooltips, and the flat `stats/<uuid>.json` file the
 1.8 server reads and sends (`PacketPlayOutStatistics`). The Block/Item row values
 canonicalise through `Stats.method_8293`'s aliases (grass and farmland count as
 dirt, a jack o'lantern as a pumpkin, ...). `Stats.CRAFTING_STATS` is built from
-the generated 1.8 crafting recipes and 1.8's own smelting table. Debt: 1.8 names
-are resolved through modern item names (`pack.names.display_item`), so
-non-English names fall back to English.
+the generated 1.8 crafting recipes and 1.8's own smelting table. A row's name
+and tooltip come from `pack.names.display_item`, which reads the selected
+language's `item.*`/`block.*` key before the pinned English name, so the 1.8
+legacy-key copy in `Language::load` localises them.
 Achievements are the 1.8 tree in the same stats file: `AchievementsAndCriterions`
 creates 34 entries on its 24-pixel grid, `StatsScreen`'s achievement button opens
 `AchievementsScreen`, and a 1.8 server's statistics response arms the
@@ -978,12 +980,28 @@ rarity parent, so the two zooms above the shared rarity layer keep
 `field_173 == 0`, while the rarity base itself is seeded through the river
 branch.
 
-The chain is not yet the generator's biome source. Terrain, caves, features and
-structures still come from the 26.3 generator (see the debt below).
+The chain is the overworld's biome source, not a side module: a 1.8.9
+`OverworldGenerator` replaces the data pack's noise source with
+`worldgen/biome_source/layer_1_8_9.rs`'s `LayerBiomeSource18`, so every biome
+query — chunk biomes, surface rules, decoration, structure starts, spawn
+checks, `/locate biome` and far terrain — reads the 1.8 chain. The source keeps
+one chain behind a lock and caches the chunk it last answered, as
+`BiomeCache.Block` does; a quart takes the biome of its first block, which is
+the block every 4×4×4 biome query rounds to. `WorldType.LARGE_BIOMES`
+(`minecraft:large_biomes`) uses `BiomeLayers18::large_biomes`, the same chain
+with `biomeSize = 6`; superflat and a fixed-biome preset keep their fixed
+source. 1.8 has no `Blender`, so a new chunk next to a saved one is not
+height- or biome-blended. The saved 16x16 `Biomes` array still receives those
+values quantized to 4 blocks, because the engine's chunk biome storage is
+quart-resolution.
 
-Port the 1.8 terrain generator, biome selection, caves, features and
-structures. For a server-first cut this can come after stages 1–5; single-player
-is not playable without it.
+Terrain, caves, features and structures still come from the 26.3 generator (see
+the debt below); its surface rules and placed features now run over the 1.8
+biome layout.
+
+Port the 1.8 terrain generator, caves, features and structures. For a
+server-first cut this can come after stages 1–5; single-player is not playable
+without it.
 
 ### 7. Android installer and launcher (private build implemented)
 
@@ -1004,13 +1022,13 @@ still consumes 26.3 data.
 
 Known 1.8 debt, in the order it should be paid:
 
-- World generation still runs the 26.3 generator with 1.8 block tables
-  projected onto it (stage 6). Terrain, caves, features and structures are not
+- World generation still runs the 26.3 noise terrain with 1.8 block tables
+  projected onto it (stage 6). 1.8 biome selection is wired in
+  (`LayerBiomeSource18`), but terrain, caves, features and structures are not
   yet 1.8 algorithms, so seed-for-seed parity with a 1.8.9 server is not there.
-- 1.8 biome selection is ported and oracle-tested (`biome_layer_1_8_9.rs`) but
-  not wired in: `LayeredBiomeSource` still asks the 26.3 generator, so a 1.8
-  seed's biome layout is not the 1.8 one until the terrain generator is ported
-  too (stage 6).
+- A chunk stores one biome per 4x4x4 quart, so the saved 1.8 `Biomes` array is
+  the Voronoi layer sampled every four blocks rather than its exact 16x16
+  values.
 - The item registry and creative tabs are 1.8's (566 items, the twelve
   `ItemGroup` tabs generated from the real jar). The
   per-tick spawn rules, generation mob packs and the remaining `data/` trees
@@ -1107,6 +1125,7 @@ Last full run in this tree (Linux, `--no-default-features` for the client):
 | `cargo test -p horizon-items --lib a_custom_potion_keeps_its_effects_in_1_8_nbt` | passed: `Id` 1, `Amplifier` 1, `Duration` 200, `Ambient` 0, `ShowParticles` 1, and the reader gives the effect back |
 | `cargo test -p horizon-client-core --lib lang::tests` | 10 passed (the Russian, German and Chinese bundles, the 1.8 `.lang` parser, a locale's legacy enchantment keys and item names, a composed spawn egg, the English fallback) |
 | `cargo test -p horizon-world --lib biome_layer_1_8_9` | 3 passed (30 oracle cases against the named 1.8.9 jar: five default seeds and one large-biomes seed, 16x16 Voronoi chunk origins and the 10x10/5x3 river neighbourhoods) |
+| `cargo test -p horizon-world --lib worldgen::biome_source::layer_1_8_9` | 3 passed (a quart reads its Voronoi cell's first block over three seeds and three chunks, large biomes is the `biomeSize = 6` chain, the one-chunk cache answers neighbouring blocks) |
 
 Run `horizon-client-render` serially: its GPU tests can crash when several run
 at once. The ignored tests need prepared resources.

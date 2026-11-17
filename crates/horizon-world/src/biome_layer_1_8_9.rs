@@ -408,7 +408,7 @@ impl LayerRng {
 }
 
 /// One `GenLayer` node: draws a rectangle of layer-space ids.
-trait BiomeLayer {
+trait BiomeLayer: Send {
     fn get_ints(&mut self, x: i32, z: i32, width: i32, height: i32) -> Vec<i32>;
     fn seed(&mut self, seed: i64);
 }

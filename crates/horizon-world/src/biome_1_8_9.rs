@@ -187,6 +187,12 @@ const OLD_NAMES: &[(&str, u8)] = &[
     ("minecraft:wooded_mountains", 34),
 ];
 
+/// Every 26.3 name the 1.8.9 table holds, with duplicates for the ids that
+/// share one (the hills variants and the collapsed mutated variants).
+pub fn names() -> impl Iterator<Item = &'static str> {
+    BIOMES.iter().map(|&(_, name)| name)
+}
+
 /// The 1.8.9 id `BiomeGenBase` registered, or `None` when it registered none.
 pub fn biome_name(id: u8) -> Option<&'static str> {
     BIOMES

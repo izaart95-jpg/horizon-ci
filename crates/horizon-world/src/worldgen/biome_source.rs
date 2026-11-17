@@ -1,8 +1,10 @@
 //! Fixed, checkerboard and End biome-source queries. Registry codecs are separate.
 mod codec;
+mod layer_1_8_9;
 mod runtime;
 pub use codec::{BiomeSet, BiomeSourceCatalog, BiomeSourceDefinition};
 use horizon_core::density::{DensitySampler, SampleError, SamplerContext};
+pub use layer_1_8_9::LayerBiomeSource18;
 pub use runtime::{BiomeSourceError, BiomeSourceResolver, ResolvedBiomeSource};
 
 #[derive(Clone, Debug)]

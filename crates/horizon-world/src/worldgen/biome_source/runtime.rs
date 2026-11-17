@@ -1,7 +1,7 @@
 //! World-bound biome sources and per-worker resolver state.
 use super::{
     BiomeSourceDefinition, CheckerboardBiomeSource, CheckerboardError, EndBiomeSource,
-    FixedBiomeSource,
+    FixedBiomeSource, LayerBiomeSource18,
 };
 use crate::worldgen::{
     DecodeError,
@@ -52,6 +52,10 @@ pub enum ResolvedBiomeSource {
     Checkerboard(CheckerboardBiomeSource<String>),
     End(EndBiomeSource<String>),
     MultiNoise(MultiNoiseBiomeSource),
+    /// The 1.8.9 overworld's `WorldChunkManager`: the `Layer.init` chain at
+    /// block resolution, ignoring climate and Y. A 1.8 build replaces the data
+    /// pack's noise source with it.
+    OneEight(LayerBiomeSource18),
 }
 impl BiomeSourceDefinition {
     /// Resolve a decoded definition using immutable, authenticated quantized
@@ -104,6 +108,7 @@ impl ResolvedBiomeSource {
                 .iter()
                 .map(|(_, name)| name.as_str())
                 .collect(),
+            Self::OneEight(_) => crate::biome_1_8_9::names().collect(),
         }
     }
     /// Keep one resolver per worker to retain native previous-leaf tie behavior.
@@ -118,6 +123,7 @@ impl ResolvedBiomeSource {
             Self::Checkerboard(source) => BiomeSourceResolver::Checkerboard(source),
             Self::End(source) => BiomeSourceResolver::End(source, erosion),
             Self::MultiNoise(source) => BiomeSourceResolver::MultiNoise(source.resolver(climate)),
+            Self::OneEight(source) => BiomeSourceResolver::OneEight(source),
         }
     }
 }
@@ -127,6 +133,7 @@ pub enum BiomeSourceResolver<'a> {
     Checkerboard(&'a CheckerboardBiomeSource<String>),
     End(&'a EndBiomeSource<String>, &'a dyn DensitySampler),
     MultiNoise(BiomeResolver<'a>),
+    OneEight(&'a LayerBiomeSource18),
 }
 impl<'a> BiomeSourceResolver<'a> {
     pub fn sample(
@@ -139,6 +146,10 @@ impl<'a> BiomeSourceResolver<'a> {
             Self::Checkerboard(source) => source.noise_biome(quart)?.as_str(),
             Self::End(source, erosion) => source.noise_biome(quart, *erosion, context)?.as_str(),
             Self::MultiNoise(source) => source.sample(context, quart)?,
+            // `WorldChunkManager.getBiomeGenAt`: one biome per block from the
+            // Voronoi layer, whatever the climate or Y says.
+            Self::OneEight(source) => crate::biome_1_8_9::biome_name(source.biome_at_quart(quart))
+                .unwrap_or("minecraft:plains"),
         })
     }
     /// Native fixed/checkerboard/End sources do not pre-sample a climate volume.
