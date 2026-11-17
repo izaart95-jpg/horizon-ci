@@ -38,6 +38,28 @@ impl LayerBiomeSource18 {
             cache: Mutex::new(Cache { layers, last: None }),
         }
     }
+    /// The two arrays the 1.8 terrain pass reads for chunk `(chunk_x,
+    /// chunk_z)`: `method_3857`'s 10x10 river-mixed density neighbourhood
+    /// (x-major) and `getBiomesForGeneration`'s 16x16 Voronoi array. The
+    /// Voronoi array is also the chunk `BiomeCache` holds afterwards.
+    pub fn terrain_biomes(&self, chunk_x: i32, chunk_z: i32) -> ([u8; 100], [u8; 256]) {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let ids = cache.layers.river_mixed(
+            chunk_x.wrapping_mul(4).wrapping_sub(2),
+            chunk_z.wrapping_mul(4).wrapping_sub(2),
+            10,
+            10,
+        );
+        let mut river = [0u8; 100];
+        for (biome, id) in river.iter_mut().zip(ids) {
+            debug_assert!((0..=255).contains(&id));
+            *biome = id as u8;
+        }
+        let biomes = cache.layers.chunk_biomes(chunk_x, chunk_z);
+        cache.last = Some(((chunk_x, chunk_z), Box::new(biomes)));
+        (river, biomes)
+    }
+
     /// The biome of the block a quart starts at (`quart << 2`).
     pub fn biome_at_quart(&self, quart: [i32; 3]) -> u8 {
         self.biome_at_block(quart[0].wrapping_shl(2), quart[2].wrapping_shl(2))

@@ -995,9 +995,10 @@ height- or biome-blended. The saved 16x16 `Biomes` array still receives those
 values quantized to 4 blocks, because the engine's chunk biome storage is
 quart-resolution.
 
-Terrain, caves, features and structures still come from the 26.3 generator (see
-the debt below); its surface rules and placed features now run over the 1.8
-biome layout.
+Terrain now comes from the 1.8 generator: the 1.8 noise lattice and biome
+surface pass fill the overworld chunk. Caves are not carved yet, and features
+and structures still come from the 26.3 generator (see the debt below), so its
+placed features run over the 1.8 terrain.
 
 The first terrain pieces are in place. `worldgen/noise_1_8_9.rs` ports the
 seven noise generators `SurfaceChunkGenerator` constructs from one
@@ -1023,13 +1024,18 @@ first mesa world triggers). `tests/fixtures/surface_1_8_9.txt` pins nine
 chunks — mesa, extreme hills, mega taiga, swamp, snowy and beach among them —
 by their biome ids, the 10x10 density neighbourhood, all 256 surface-noise
 doubles and every column's block-state runs. Terrain and its biome surface
-are therefore bit-exact 1.8.9. The generator does not read these modules yet:
-carvers, features, structures and the chunk wiring are still open, which is
-why the 26.3 generator still grows the world.
+are therefore bit-exact 1.8.9. `ChunkGenerator18` runs the density fill, the
+trilinear interpolation and the surface pass for one chunk, and the overworld
+chunk path (`generator.rs`) hands its `ChunkBlockStateStorage` to
+`write_one_eight_chunk`, which maps every legacy state through the datafixer
+and the block registry and primes the post-terrain heightmaps. Carvers are
+still skipped (1.8 caves are not ported), and the 26.3 placed features and
+structures still run over the 1.8 terrain, so seed-for-seed parity with a
+1.8.9 server needs the rest of stage 6.
 
-Port the 1.8 terrain generator, caves, features and structures. For a
-server-first cut this can come after stages 1–5; single-player is not playable
-without it.
+Port the 1.8 carvers (caves and ravines), then its features, decoration and
+structures, onto the 1.8 terrain. For a server-first cut this can come after
+stages 1–5; single-player is not playable without it.
 
 ### 7. Android installer and launcher (private build implemented)
 
@@ -1050,15 +1056,14 @@ still consumes 26.3 data.
 
 Known 1.8 debt, in the order it should be paid:
 
-- World generation still runs the 26.3 noise terrain with 1.8 block tables
-  projected onto it (stage 6). 1.8 biome selection is wired in
-  (`LayerBiomeSource18`), and the terrain noise primitives, the biome terrain
-  table, the density fill/interpolation and the biome surface pass are ported
-  bit-exactly (`noise_1_8_9.rs`, `biome_terrain_1_8_9.rs`,
-  `worldgen/terrain_1_8_9.rs`, `worldgen/surface_1_8_9.rs`), but caves,
-  features and structures are not yet 1.8 algorithms, and no chunk path calls
-  the 1.8 terrain yet, so seed-for-seed parity with a 1.8.9 server is not
-  there.
+- World generation (stage 6) is part 1.8: the overworld's biome layout, noise
+  lattice, trilinear density and biome surface pass are 1.8.9 algorithms, and
+  the 1.8 chunk path fills the chunk from them (`LayerBiomeSource18`,
+  `noise_1_8_9.rs`, `biome_terrain_1_8_9.rs`, `worldgen/terrain_1_8_9.rs`,
+  `worldgen/surface_1_8_9.rs`). Caves are not carved yet (no 1.8
+  `CaveCarver`/`RavineCarver`), and features and structures are still the 26.3
+  placed features and jigsaw pieces running over the 1.8 terrain, so
+  seed-for-seed parity with a 1.8.9 server is not there.
 - A chunk stores one biome per 4x4x4 quart, so the saved 1.8 `Biomes` array is
   the Voronoi layer sampled every four blocks rather than its exact 16x16
   values.

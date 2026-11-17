@@ -35,6 +35,7 @@ use super::{
     router::{NoiseRouter, RouterField, RouterSamplers},
     settings::NoiseSettings,
     spawn_finder::{SpawnTargetPoint, find_spawn_position},
+    surface_1_8_9::ChunkGenerator18,
     tags::TagDefinitions,
     terrain::{PreLightChunkStage, TerrainAquifer, TerrainBlockStates, TerrainChunk, fill_noise},
 };
@@ -117,6 +118,89 @@ fn one_eight_biomes(preset: &str, dimension: &str, seed: i64) -> Option<LayerBio
             LayerBiomeSource18::new(seed)
         }
     })
+}
+
+/// Writes a 1.8.9 `ChunkBlockStateStorage` (`x << 12 | z << 8 | y`,
+/// `id << 4 | meta`) into the proto chunk and primes the post-terrain
+/// heightmaps.
+///
+/// Every legacy state goes through the datafixer and then the block registry;
+/// metadata that names fewer properties than the 26.3 state (a fence has no
+/// `waterlogged`) is filled from the block's default state, and a name the
+/// registry lacks is an error naming the block rather than a silent air block.
+/// Runs outside the chunk's build range are skipped: a 1.8 overworld is Y
+/// 0..256, while a data pack can declare a different range.
+fn write_one_eight_chunk(
+    chunk: &mut TerrainChunk<'_, GenBlockStates>,
+    data: &GeneratorData,
+    pos: ChunkPos,
+    storage: &[u16],
+) -> Result<(), GeneratorError> {
+    const HEIGHT: usize = 256;
+    assert_eq!(storage.len(), 16 * 16 * HEIGHT, "1.8 chunk storage");
+    let (min_y, height) = (chunk.min_y(), chunk.height());
+    let max_y = min_y + height;
+    let mut ids: HashMap<u16, BlockStateId> = HashMap::new();
+    for z in 0..16i32 {
+        for x in 0..16i32 {
+            let column = ((x as usize) << 12) | ((z as usize) << 8);
+            let mut y = 0usize;
+            while y < HEIGHT {
+                let legacy = storage[column | y];
+                if legacy >> 4 == 0 {
+                    y += 1;
+                    continue;
+                }
+                let mut top = y;
+                while top + 1 < HEIGHT && storage[column | (top + 1)] == legacy {
+                    top += 1;
+                }
+                let state = match ids.get(&legacy) {
+                    Some(&state) => state,
+                    None => {
+                        let id = legacy >> 4;
+                        let meta = (legacy & 0xF) as u8;
+                        let legacy_state = crate::legacy_1_8_9::block_state(id, meta);
+                        let state = data.registry.id_filled(&legacy_state).ok_or_else(|| {
+                            resource(format!(
+                                "1.8 block {id}:{meta} ({}) is not in the block registry",
+                                legacy_state.name
+                            ))
+                        })?;
+                        ids.insert(legacy, state);
+                        state
+                    }
+                };
+                // `ChunkBlockStateStorage` indexes Y upward while
+                // `fill_solid_run` writes from the top down.
+                let start = (y as i32).max(min_y);
+                let end = (top as i32 + 1).min(max_y);
+                if start < end {
+                    chunk
+                        .fill_solid_run(
+                            pos.x.wrapping_shl(4) + x,
+                            end - 1,
+                            pos.z.wrapping_shl(4) + z,
+                            end - start,
+                            state,
+                        )
+                        .map_err(stage("one_eight_terrain"))?;
+                }
+                y = top + 1;
+            }
+        }
+    }
+    chunk
+        .prime_heightmaps(&[
+            HeightmapType::WorldSurfaceWg,
+            HeightmapType::OceanFloorWg,
+            HeightmapType::MotionBlocking,
+            HeightmapType::MotionBlockingNoLeaves,
+            HeightmapType::OceanFloor,
+            HeightmapType::WorldSurface,
+        ])
+        .map_err(stage("heightmaps"))?;
+    Ok(())
 }
 
 /// Heightmap-relevant block behavior, one entry per registry state.
@@ -934,6 +1018,8 @@ struct Pipeline<R: RandomSource> {
     /// This pipeline's biomes come from the 1.8.9 layer chain: they are
     /// already block-resolution, so `BiomeZoom` does not apply.
     one_eight: bool,
+    /// The preset is 1.8.9's `WorldType.AMPLIFIED`.
+    one_eight_amplified: bool,
     biome_cache: BiomeCache,
     biome_work: ChunkWork,
     carver_cache: Mutex<HashMap<(i32, i32), BiomeId>>,
@@ -1042,6 +1128,7 @@ where
         with_structures: bool,
         level: Option<(i32, i32)>,
         biomes_1_8_9: Option<LayerBiomeSource18>,
+        one_eight_amplified: bool,
     ) -> Result<Self, GeneratorError> {
         let registry = data.registry;
         let noise = &settings_json["noise"];
@@ -1595,6 +1682,37 @@ where
                     HeightmapType::WorldSurface,
                 ])
                 .map_err(stage("heightmaps"))?;
+            chunk.set_generation_stage(PreLightChunkStage::Terrain);
+            return Ok(ProtoChunk {
+                terrain: chunk,
+                biomes: center,
+                data: data.clone(),
+                decorated: false,
+                block_entities: Vec::new(),
+                structure_starts: references,
+                own_starts,
+                entities: Vec::new(),
+            });
+        }
+        if self.one_eight {
+            let ResolvedBiomeSource::OneEight(source) = &self.source else {
+                return Err(resource("1.8 terrain without the layer biome source"));
+            };
+            let (river, voronoi) = source.terrain_biomes(pos.x, pos.z);
+            let terrain = worker
+                .one_eight_terrain
+                .get_or_insert_with(|| ChunkGenerator18::new(self.seed, self.one_eight_amplified));
+            let storage = terrain.generate(
+                self.seed,
+                &river,
+                &voronoi,
+                pos.x,
+                pos.z,
+                self.settings.sea_level,
+            );
+            write_one_eight_chunk(&mut chunk, data, pos, &storage)?;
+            worker.timings.noise += lap(&mut clock);
+            worker.timings.structures += lap(&mut clock);
             chunk.set_generation_stage(PreLightChunkStage::Terrain);
             return Ok(ProtoChunk {
                 terrain: chunk,
@@ -2353,6 +2471,8 @@ pub(super) struct WorkerState {
     /// Decorate with structure pieces only (for structure parity checks).
     pub(super) structures_only: bool,
     pub(super) structure_mobs: Option<Arc<dyn StructureMobs>>,
+    /// The 1.8.9 overworld terrain stage, built on this thread's first chunk.
+    one_eight_terrain: Option<ChunkGenerator18>,
 }
 /// `Mob.finalizeSpawn(level, difficulty, STRUCTURE, null)` of the entities a
 /// structure places with finalizeEntities, run by the game, which owns mobs.
@@ -3310,6 +3430,7 @@ impl OverworldGenerator {
             structures,
             Some((level_min_y, level_height)),
             None,
+            false,
         )?;
         let mut states = Vec::new();
         let mut null = Vec::new();
@@ -3432,6 +3553,7 @@ impl OverworldGenerator {
         // the End are one biome in 1.8 and keep the data pack's source;
         // superflat and a fixed-biome preset keep theirs.
         let biomes_1_8_9 = one_eight_biomes(preset, dimension, seed);
+        let one_eight_amplified = biomes_1_8_9.is_some() && preset == "minecraft:amplified";
         let pipeline: Arc<dyn SeededPipeline> = if settings_json["legacy_random_source"]
             .as_bool()
             .unwrap_or(false)
@@ -3445,6 +3567,7 @@ impl OverworldGenerator {
                 with_structures,
                 level,
                 biomes_1_8_9,
+                one_eight_amplified,
             )?)
         } else {
             Arc::new(Pipeline::new(
@@ -3456,6 +3579,7 @@ impl OverworldGenerator {
                 with_structures,
                 level,
                 biomes_1_8_9,
+                one_eight_amplified,
             )?)
         };
         Ok(Self {
@@ -3531,6 +3655,7 @@ impl OverworldGenerator {
                 structures_only: false,
                 structure_mobs: None,
                 heights: HashMap::new(),
+                one_eight_terrain: None,
             },
         }
     }
@@ -3810,6 +3935,7 @@ mod tests {
             false,
             None,
             None,
+            false,
         )
         .unwrap();
         let mut worker = OverworldGenerator::for_world(
@@ -4377,6 +4503,7 @@ mod tests {
                 true,
                 Some((-64, 384)),
                 None,
+                false,
             )
             .expect("pipeline"),
         );

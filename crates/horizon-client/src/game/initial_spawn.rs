@@ -93,6 +93,13 @@ impl Game<'_> {
         if self.options.test_terrain {
             return Ok(((0, 0), 64));
         }
+        // 1.8 has no `NoiseSpawnFinder`: `World.getSpawnPoint` starts at
+        // (0, 64, 0), and `MinecraftServer.setInitialSpawn` searches the
+        // chunks around it. The 26.3 climate search would pick a spot far
+        // from the origin the player expects.
+        if horizon_core::target::is_1_8_9() {
+            return Ok(((0, 0), 64));
+        }
         let origin = match self.end.locator() {
             Some(terrain) => terrain.origin()?,
             None => horizon_core::position::ChunkPos::new(0, 0),

@@ -30,7 +30,7 @@ use std::sync::OnceLock;
 use horizon_core::random::{LegacyRandom, RandomSource};
 
 use super::noise_1_8_9::{PerlinNoise18, TerrainNoise18};
-use super::terrain_1_8_9::{CHUNK_VOLUME, DensityBlock18};
+use super::terrain_1_8_9::{self, CHUNK_VOLUME, DensityBlock18, TerrainDensity18};
 use crate::biome_terrain_1_8_9::{self, BiomeTerrain18, LegacyBlock18, PLAINS, Surface18};
 
 /// One chunk's block states, `id << 4 | meta`, indexed
@@ -258,6 +258,70 @@ impl SurfaceState18 {
     }
 }
 
+/// The 1.8.9 overworld terrain stage: `method_6544`'s density lattice, then
+/// `method_9194`'s blocks, then `method_6546`'s biome surface.
+///
+/// One per generator thread: the density buffers and the mesa caches are
+/// reused across chunks, and the mesa height noises remember the previous
+/// world just as the shared `Biome` instances do.
+pub struct ChunkGenerator18 {
+    density: TerrainDensity18,
+    surface: SurfaceState18,
+    /// `LevelGeneratorType.AMPLIFIED`: doubled positive biome depth and
+    /// quadrupled variation in the density blend.
+    amplified: bool,
+}
+
+impl ChunkGenerator18 {
+    pub fn new(seed: i64, amplified: bool) -> Self {
+        Self {
+            density: TerrainDensity18::new(seed),
+            surface: SurfaceState18::new(),
+            amplified,
+        }
+    }
+
+    /// A chunk's block states in `ChunkBlockStateStorage` order (`x << 12 |
+    /// z << 8 | y`, `id << 4 | meta`), with no carvers, features or
+    /// structures.
+    ///
+    /// `river_biomes` is `method_3857`'s 10x10 density neighbourhood and
+    /// `voronoi_biomes` the 16x16 Voronoi array the surface pass and the
+    /// saved `Biomes` tag use.
+    #[allow(clippy::too_many_arguments)]
+    pub fn generate(
+        &mut self,
+        world_seed: i64,
+        river_biomes: &[u8],
+        voronoi_biomes: &[u8],
+        chunk_x: i32,
+        chunk_z: i32,
+        sea_level: i32,
+    ) -> Vec<u16> {
+        assert_eq!(river_biomes.len(), 100, "10x10 river-mixed biomes");
+        assert_eq!(voronoi_biomes.len(), 256, "16x16 Voronoi biomes");
+        let density = self
+            .density
+            .fill(river_biomes, chunk_x, chunk_z, self.amplified)
+            .to_vec();
+        let mut storage = vec![0u16; STORAGE_LEN];
+        fill_from_density(
+            &terrain_1_8_9::fill_blocks(&density, sea_level),
+            &mut storage,
+        );
+        self.surface.apply(
+            self.density.noises(),
+            world_seed,
+            voronoi_biomes,
+            chunk_x,
+            chunk_z,
+            sea_level,
+            &mut storage,
+        );
+        storage
+    }
+}
+
 /// `Block.getByBlockState`: the 1.8 block id and metadata as the storage
 /// packs them. The table's metadata is already four bits.
 fn legacy_state(block: LegacyBlock18) -> u16 {
@@ -404,7 +468,8 @@ fn swamp_column(
             }
             storage[index] = WATER;
             if e < 0.12 {
-                storage[index | 1] = LILY_PAD;
+                // 1.8 sets `m + 1`, and this branch only runs at m = 62.
+                storage[index + 1] = LILY_PAD;
             }
             break;
         }
