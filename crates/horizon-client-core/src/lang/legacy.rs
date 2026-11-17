@@ -766,6 +766,123 @@ pub(super) const FALLBACKS: &[(&str, &str)] = &[
     ),
 ];
 
+/// `EntityList.entityEggs` in 1.8: the current spawn-egg item key and the
+/// 1.8 entity name `ItemMonsterPlacer` appends to `item.monsterPlacer.name`.
+/// The 27 are 1.8's own egg list (the snow golem and iron golem have none),
+/// and the name is the class name `EntityList.getStringFromID` returns, not
+/// the current entity id: the magma cube is `LavaSlime`, the horse
+/// `EntityHorse`, the zombified piglin `PigZombie`.
+pub(super) const EGG_ENTITY_KEYS_1_8_9: &[(&str, &str)] = &[
+    ("item.minecraft.bat_spawn_egg", "entity.Bat.name"),
+    ("item.minecraft.blaze_spawn_egg", "entity.Blaze.name"),
+    (
+        "item.minecraft.cave_spider_spawn_egg",
+        "entity.CaveSpider.name",
+    ),
+    ("item.minecraft.chicken_spawn_egg", "entity.Chicken.name"),
+    ("item.minecraft.cow_spawn_egg", "entity.Cow.name"),
+    ("item.minecraft.creeper_spawn_egg", "entity.Creeper.name"),
+    ("item.minecraft.enderman_spawn_egg", "entity.Enderman.name"),
+    (
+        "item.minecraft.endermite_spawn_egg",
+        "entity.Endermite.name",
+    ),
+    ("item.minecraft.ghast_spawn_egg", "entity.Ghast.name"),
+    ("item.minecraft.guardian_spawn_egg", "entity.Guardian.name"),
+    ("item.minecraft.horse_spawn_egg", "entity.EntityHorse.name"),
+    (
+        "item.minecraft.magma_cube_spawn_egg",
+        "entity.LavaSlime.name",
+    ),
+    (
+        "item.minecraft.mooshroom_spawn_egg",
+        "entity.MushroomCow.name",
+    ),
+    ("item.minecraft.ocelot_spawn_egg", "entity.Ozelot.name"),
+    ("item.minecraft.pig_spawn_egg", "entity.Pig.name"),
+    ("item.minecraft.rabbit_spawn_egg", "entity.Rabbit.name"),
+    ("item.minecraft.sheep_spawn_egg", "entity.Sheep.name"),
+    (
+        "item.minecraft.silverfish_spawn_egg",
+        "entity.Silverfish.name",
+    ),
+    ("item.minecraft.skeleton_spawn_egg", "entity.Skeleton.name"),
+    ("item.minecraft.slime_spawn_egg", "entity.Slime.name"),
+    ("item.minecraft.spider_spawn_egg", "entity.Spider.name"),
+    ("item.minecraft.squid_spawn_egg", "entity.Squid.name"),
+    ("item.minecraft.villager_spawn_egg", "entity.Villager.name"),
+    ("item.minecraft.witch_spawn_egg", "entity.Witch.name"),
+    ("item.minecraft.wolf_spawn_egg", "entity.Wolf.name"),
+    ("item.minecraft.zombie_spawn_egg", "entity.Zombie.name"),
+    (
+        "item.minecraft.zombified_piglin_spawn_egg",
+        "entity.PigZombie.name",
+    ),
+];
+
+/// The 1.8 `en_US.lang` key for each of the 25 enchantments: a locale's value
+/// is copied onto the current description key before the English fallback.
+pub(super) const ENCHANTMENT_LEGACY_KEYS: &[(&str, &str)] = &[
+    (
+        "enchantment.minecraft.aqua_affinity",
+        "enchantment.waterWorker",
+    ),
+    (
+        "enchantment.minecraft.bane_of_arthropods",
+        "enchantment.damage.arthropods",
+    ),
+    (
+        "enchantment.minecraft.blast_protection",
+        "enchantment.protect.explosion",
+    ),
+    (
+        "enchantment.minecraft.depth_strider",
+        "enchantment.waterWalker",
+    ),
+    ("enchantment.minecraft.efficiency", "enchantment.digging"),
+    (
+        "enchantment.minecraft.feather_falling",
+        "enchantment.protect.fall",
+    ),
+    ("enchantment.minecraft.fire_aspect", "enchantment.fire"),
+    (
+        "enchantment.minecraft.fire_protection",
+        "enchantment.protect.fire",
+    ),
+    ("enchantment.minecraft.flame", "enchantment.arrowFire"),
+    (
+        "enchantment.minecraft.fortune",
+        "enchantment.lootBonusDigger",
+    ),
+    (
+        "enchantment.minecraft.infinity",
+        "enchantment.arrowInfinite",
+    ),
+    ("enchantment.minecraft.knockback", "enchantment.knockback"),
+    ("enchantment.minecraft.looting", "enchantment.lootBonus"),
+    (
+        "enchantment.minecraft.luck_of_the_sea",
+        "enchantment.lootBonusFishing",
+    ),
+    ("enchantment.minecraft.lure", "enchantment.fishingSpeed"),
+    ("enchantment.minecraft.power", "enchantment.arrowDamage"),
+    (
+        "enchantment.minecraft.projectile_protection",
+        "enchantment.protect.projectile",
+    ),
+    (
+        "enchantment.minecraft.protection",
+        "enchantment.protect.all",
+    ),
+    ("enchantment.minecraft.punch", "enchantment.arrowKnockback"),
+    ("enchantment.minecraft.respiration", "enchantment.oxygen"),
+    ("enchantment.minecraft.sharpness", "enchantment.damage.all"),
+    ("enchantment.minecraft.silk_touch", "enchantment.untouching"),
+    ("enchantment.minecraft.smite", "enchantment.damage.undead"),
+    ("enchantment.minecraft.thorns", "enchantment.thorns"),
+    ("enchantment.minecraft.unbreaking", "enchantment.durability"),
+];
+
 /// `enchantment.minecraft.<name>` in English.
 ///
 /// 1.8 names the enchantments by legacy keys (`enchantment.damage.all`), so a

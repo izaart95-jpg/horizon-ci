@@ -454,7 +454,7 @@ fn custom_effect_tag(effect: &Tag) -> Option<Tag> {
     let Tag::String(id) = effect.get("id")? else {
         return None;
     };
-    let id = horizon_client_core::potions_1_8_9::effect_id(id)?;
+    let id = horizon_client_core::potions_1_8_9::effect_id(id.to_string_lossy().as_ref())?;
     let number = |key: &str| {
         effect.get(key).and_then(|tag| match tag {
             Tag::Byte(v) => Some(i64::from(*v)),

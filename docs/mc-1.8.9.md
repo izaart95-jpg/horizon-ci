@@ -581,6 +581,15 @@ used to fall back to the lowercased id. `tools/ItemNameProbe18.java` dumps every
 `NAMES_1_8_9` (566 entries) from the current item table, keyed by each item's
 `minecraft:item_name`; `Language::load` inserts it only when the root is a 1.8
 one (`tile.stone.stone.name` is present), so a 26.3 root keeps its own names.
+A locale file names the same items under the 1.8 keys, so the generator also
+writes `LEGACY_KEYS_1_8_9` (538 current keys onto their `tile.<name>.name` /
+`item.<name>.name` key, a banner onto `ItemBanner`'s
+`item.banner.<colour>.name`) and `Language::load` copies each locale's value
+onto the current key before the English table fills what it cannot answer. A
+spawn egg is one 1.8 item key for all 27 eggs, so the loader composes the
+locale's `item.monsterPlacer.name` with `entity.<Name>.name` from
+`EGG_ENTITY_KEYS_1_8_9` (1.8's `EntityList` class names: `LavaSlime`,
+`EntityHorse`, `PigZombie`).
 Spawn eggs are 1.8's item 383 with the entity's network id in `Damage`
 (`Creeper` 50, `Pig` 90, `Villager` 120); `legacy_id`/`legacy_stack` map the
 current egg names by that id, the datafixer's `ItemSpawnEggFix` turns the damage
@@ -923,9 +932,11 @@ click re-seeds `xpSeed + slot` and applies every entry
 `EnchantmentHelper.buildEnchantmentList` returns (a book drops one random entry
 from a list of two or more); the shown clue is one random entry of that same
 list. 1.8's `en_US.lang` keys the enchantments by
-legacy names (`enchantment.damage.all`), so the current description keys come
-from an English fallback list (`ENCHANTMENT_NAMES`); a non-English player still
-sees English enchantment names until `horizon-prepare` emits the mapping.
+legacy names (`enchantment.damage.all`), not the current description keys.
+`Language::load` copies each locale's own value from its legacy key onto the
+current key before the English fallback (`ENCHANTMENT_NAMES`), so a translated
+1.8 language file names the enchantments in its language and only a missing
+one falls back to English.
 
 The anvil is `AnvilScreenHandler.updateResult`: the prior-work tax is
 `input.repairCost + addition.repairCost`, renaming costs 1, a rename-only
@@ -1072,6 +1083,7 @@ Last full run in this tree (Linux, `--no-default-features` for the client):
 | 1.8.9 `MinecraftClient.handleKeybinds` bytecode | the inventory key sends `OPEN_INVENTORY` and opens the survival screen in every game mode; the remote path sends it too (internal action 3, wire action 2) |
 | `cargo test -p horizon-client-render --lib one_eight_splash_keeps_the_stacks_own_nbt` | passed: the splash transmute keeps the custom name and the custom speed effect |
 | `cargo test -p horizon-items --lib a_custom_potion_keeps_its_effects_in_1_8_nbt` | passed: `Id` 1, `Amplifier` 1, `Duration` 200, `Ambient` 0, `ShowParticles` 1, and the reader gives the effect back |
+| `cargo test -p horizon-client-core --lib lang::tests` | 10 passed (the Russian, German and Chinese bundles, the 1.8 `.lang` parser, a locale's legacy enchantment keys and item names, a composed spawn egg, the English fallback) |
 
 Run `horizon-client-render` serially: its GPU tests can crash when several run
 at once. The ignored tests need prepared resources.

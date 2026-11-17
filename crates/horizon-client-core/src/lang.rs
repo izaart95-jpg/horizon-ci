@@ -267,14 +267,39 @@ impl Language {
             map.entry(key.to_owned())
                 .or_insert_with(|| value.to_owned());
         }
+        // 1.8 names the enchantments by legacy keys; a locale keeps its own
+        // translation by copying it onto the current description key.
+        for &(key, legacy) in legacy::ENCHANTMENT_LEGACY_KEYS {
+            if let Some(value) = map.get(legacy).cloned() {
+                map.entry(key.to_owned()).or_insert(value);
+            }
+        }
         for &(key, value) in legacy::ENCHANTMENT_NAMES {
             map.entry(key.to_owned())
                 .or_insert_with(|| value.to_owned());
         }
         // The 1.8 resource root keys its items `item.diamond.name`, but the
         // current item data names them `item.minecraft.diamond`; without these
-        // the display name falls back to the lowercased id.
+        // the display name falls back to the lowercased id. A locale names the
+        // item under the 1.8 key, so its value moves onto the current key
+        // before the English table fills what the file cannot answer.
         if map.contains_key("tile.stone.stone.name") {
+            for &(key, legacy) in names_1_8_9::LEGACY_KEYS_1_8_9 {
+                if let Some(value) = map.get(legacy).cloned() {
+                    map.entry(key.to_owned()).or_insert(value);
+                }
+            }
+            // `ItemMonsterPlacer.getItemStackDisplayName` is the item's own
+            // "Spawn" plus `entity.<Name>.name`; 1.8 has one item key for all
+            // 27 eggs, so compose each with the locale's entity name.
+            if let Some(spawn) = map.get("item.monsterPlacer.name").cloned() {
+                for &(key, entity) in legacy::EGG_ENTITY_KEYS_1_8_9 {
+                    if let Some(name) = map.get(entity).cloned() {
+                        let composed = format!("{} {}", spawn.trim(), name.trim());
+                        map.entry(key.to_owned()).or_insert(composed);
+                    }
+                }
+            }
             for &(key, value) in names_1_8_9::NAMES_1_8_9 {
                 map.entry(key.to_owned())
                     .or_insert_with(|| value.to_owned());
@@ -519,6 +544,56 @@ mod tests {
         // Java's UTF-8 reader replaces malformed bytes instead of failing.
         let broken = parse_legacy_lang(b"key=caf\xff\n");
         assert_eq!(broken.get("key").map(String::as_str), Some("caf\u{fffd}"));
+    }
+
+    /// 1.8 keys an enchantment `enchantment.damage.all`, not the current
+    /// `enchantment.minecraft.sharpness`: a locale's own translation moves to
+    /// the current key, and only a missing one falls back to English.
+    #[test]
+    fn a_one_eight_locale_names_the_enchantments_in_its_own_language() {
+        let pack = Mem(HashMap::from([(
+            "assets/minecraft/lang/de_DE.lang".into(),
+            "tile.stone.stone.name=Stein\nenchantment.damage.all=Sch\u{e4}rfe\nenchantment.protect.all=Schutz\n"
+                .as_bytes()
+                .to_vec(),
+        )]));
+        let sources: [&dyn ResourceSource; 1] = [&pack];
+        let de = Language::load(&sources, "de_de");
+        assert_eq!(
+            de.get("enchantment.minecraft.sharpness"),
+            Some("Sch\u{e4}rfe")
+        );
+        assert_eq!(de.get("enchantment.minecraft.protection"), Some("Schutz"));
+        // Smite is not in this locale's file, so the English fallback stands.
+        assert_eq!(de.get("enchantment.minecraft.smite"), Some("Smite"));
+    }
+
+    /// 1.8 keys an item `tile.clay.name`, and one locale file names them all.
+    /// `Language::load` moves a locale's value onto the current item key and
+    /// composes a spawn egg from `item.monsterPlacer` and the entity name;
+    /// only a name the file lacks falls back to the 1.8 English table.
+    #[test]
+    fn a_one_eight_locale_names_the_items_in_its_own_language() {
+        let pack = Mem(HashMap::from([(
+            "assets/minecraft/lang/de_DE.lang".into(),
+            "tile.stone.stone.name=Stein\ntile.clay.name=Ton\nitem.clay.name=Tonkugel\n\
+             tile.dirt.default.name=Erde\nitem.banner.red.name=Rotes Banner\n\
+             item.monsterPlacer.name=Spawn\nentity.Pig.name=Schwein\n"
+                .as_bytes()
+                .to_vec(),
+        )]));
+        let sources: [&dyn ResourceSource; 1] = [&pack];
+        let de = Language::load(&sources, "de_de");
+        assert_eq!(de.get("block.minecraft.clay"), Some("Ton"));
+        assert_eq!(de.get("item.minecraft.clay_ball"), Some("Tonkugel"));
+        assert_eq!(de.get("block.minecraft.dirt"), Some("Erde"));
+        assert_eq!(de.get("block.minecraft.red_banner"), Some("Rotes Banner"));
+        assert_eq!(
+            de.get("item.minecraft.pig_spawn_egg"),
+            Some("Spawn Schwein")
+        );
+        // Not in the locale: the 1.8 English table answers.
+        assert_eq!(de.get("block.minecraft.stone"), Some("Stone"));
     }
 
     #[test]

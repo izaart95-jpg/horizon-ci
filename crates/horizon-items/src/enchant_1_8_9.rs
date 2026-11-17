@@ -99,11 +99,7 @@ fn map_capacity(entries: usize) -> usize {
 
 /// `WeightedRandom.getRandomItem`: the weights of the collection in the
 /// iteration order above, then a subtraction walk over it.
-fn weighted<R: RandomSource>(
-    random: &mut R,
-    candidates: &BTreeMap<usize, u32>,
-    order: &[usize],
-) -> Option<usize> {
+fn weighted<R: RandomSource>(random: &mut R, order: &[usize]) -> Option<usize> {
     let total: i32 = order.iter().map(|&i| ENCHANTMENTS[i].weight as i32).sum();
     if total <= 0 {
         return None;
@@ -147,7 +143,7 @@ pub fn build_list<R: RandomSource>(random: &mut R, item: &str, level: i32) -> Ve
     }
     let capacity = map_capacity(candidates.len());
     let mut picked = Vec::new();
-    if let Some(first) = weighted(random, &candidates, &map_order(&candidates, capacity)) {
+    if let Some(first) = weighted(random, &map_order(&candidates, capacity)) {
         picked.push((first, candidates[&first]));
     }
     if picked.is_empty() {
@@ -161,7 +157,7 @@ pub fn build_list<R: RandomSource>(random: &mut R, item: &str, level: i32) -> Ve
         });
         if !candidates.is_empty() {
             let order = map_order(&candidates, capacity);
-            let pick = weighted(random, &candidates, &order).expect("the candidates have weight");
+            let pick = weighted(random, &order).expect("the candidates have weight");
             picked.push((pick, candidates[&pick]));
         }
         cost >>= 1;
