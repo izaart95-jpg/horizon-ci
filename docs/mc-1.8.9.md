@@ -919,6 +919,25 @@ legacy names (`enchantment.damage.all`), so the current description keys come
 from an English fallback list (`ENCHANTMENT_NAMES`); a non-English player still
 sees English enchantment names until `horizon-prepare` emits the mapping.
 
+The anvil is `AnvilScreenHandler.updateResult`: the prior-work tax is
+`input.repairCost + addition.repairCost`, renaming costs 1, a rename-only
+result caps at 39 and any result at 40 or more is refused outside creative.
+The per-level enchantment fee is 1.8's switch on
+`Enchantment.getEnchantmentType()`, which the jar fills with the enchantment's
+weight: 10 costs 1, 5 costs 2, 2 costs 4 and 1 costs 8, halved with a floor of
+one when the addition is an enchanted book. Item acceptance is
+`Enchantment.isAcceptableItem`, not the enchanting table's type mask: an axe
+takes sharpness, smite and bane, shears take efficiency, silk touch and
+unbreaking, and a hoe only unbreaking. The conflict check asks the candidate's
+`differs` about each enchantment already on the item, and that relation is
+asymmetric in 1.8: a silk touch book combines onto looting, a looting book does
+not combine onto silk touch. Repair materials are `Item.canRepair`: only
+tools, swords and armour have one (wooden tools take any planks, stone
+cobblestone, iron and chainmail iron, gold gold, diamond diamond, leather
+leather), so a bow with string, a fishing rod with string, shears with iron and
+a hoe with its material are not 1.8 repairs even though the 26.3 repairable
+components say they are; two damaged items of the same kind still combine.
+
 ### 6. Single-player world generation
 
 Port the 1.8 terrain generator, biome selection, caves, features and

@@ -1,7 +1,8 @@
 //! 1.8.9's own enchantment table selection: `EnchantmentHelper.buildEnchantmentList`,
 //! which gives a monster the enchantments on its spawn gear
 //! (`EntityLiving.setEnchantmentBasedOnDifficulty`) and, with the 1.8 costs,
-//! what the enchanting table puts on an item.
+//! what the enchanting table puts on an item, plus the anvil's per-enchantment
+//! combine rules (`AnvilScreenHandler.updateResult`).
 //!
 //! 26.3 picks from data-driven `min_cost`/`max_cost` windows and component
 //! tags; 1.8 has an `int` id per enchantment, a weight, a cost window that is
@@ -18,25 +19,53 @@ fn next_int<R: RandomSource>(random: &mut R, bound: i32) -> i32 {
     random.next_int_bound(bound.max(1)).unwrap_or(0)
 }
 
+/// The `ITEMS` row for `item`, if 1.8 has one.
+fn item_row(item: &str) -> Option<(&'static str, u32, u32, u32)> {
+    ITEMS.iter().copied().find(|(name, ..)| *name == item)
+}
+
 /// `Item.b()`: the enchantability `buildEnchantmentList` starts from, or 0
 /// when 1.8 has no such item.
 pub fn enchantability(item: &str) -> u32 {
-    ITEMS
-        .iter()
-        .find(|(name, _, _)| *name == item)
-        .map_or(0, |(_, enchantability, _)| *enchantability)
+    item_row(item).map_or(0, |(_, enchantability, ..)| enchantability)
 }
 
 /// `buildEnchantmentList`'s item gate: the enchantment's
 /// `EnumEnchantmentType` must accept the item. A book takes every entry, as
-/// the jar's own book check does. (Note this is *not* `Enchantment.canApply`:
+/// the jar's own book check does. (Note this is *not* `isAcceptableItem`:
 /// that one also lets sharpness onto an axe, which the type gate refuses.)
 pub fn can_apply(item: &str, index: usize) -> bool {
     item == "minecraft:book"
-        || ITEMS
-            .iter()
-            .find(|(name, _, _)| *name == item)
-            .is_some_and(|(_, _, types)| types & (1 << ENCHANTMENTS[index].kind) != 0)
+        || item_row(item)
+            .is_some_and(|(_, _, types, _)| types & (1 << ENCHANTMENTS[index].kind) != 0)
+}
+
+/// `Enchantment.isAcceptableItem`: the anvil's combine gate, overrides
+/// included. An axe takes the damage enchantments (`DamageEnchantment`) and
+/// shears take efficiency, silk touch and unbreaking, while the type gate
+/// `can_apply` refuses both.
+pub fn anvil_accepts(item: &str, index: usize) -> bool {
+    item_row(item).is_some_and(|(_, _, _, accepts)| accepts & (1 << index) != 0)
+}
+
+/// The `ENCHANTMENTS` entry called `name`.
+pub fn index_of(name: &str) -> Option<usize> {
+    ENCHANTMENTS.iter().position(|e| e.name == name)
+}
+
+/// `AnvilScreenHandler.updateResult`'s fee per resulting level: the switch on
+/// `Enchantment.getEnchantmentType()`, which in the 1.8 jar holds the
+/// enchantment's weight (10→1, 5→2, 2→4, 1→8, anything else→0). An enchanted
+/// book halves it with a floor of one.
+pub fn anvil_fee(index: usize, using_book: bool) -> i64 {
+    let fee = match ENCHANTMENTS[index].weight {
+        10 => 1,
+        5 => 2,
+        2 => 4,
+        1 => 8,
+        _ => 0,
+    };
+    if using_book { (fee / 2).max(1) } else { fee }
 }
 
 /// `Enchantment.canApplyTogether` in the direction `buildEnchantmentList`
@@ -239,11 +268,57 @@ mod tests {
         assert!(!compatible(protection, fire));
         assert!(compatible(protection, feather));
         assert!(compatible(fire, feather));
+        // The anvil combines through `isAcceptableItem`, a different gate
+        // from the table's type mask: an axe takes the damage enchantments,
+        // and shears take efficiency, silk touch and unbreaking.
+        assert!(anvil_accepts("minecraft:iron_axe", sharpness));
+        assert!(anvil_accepts("minecraft:iron_axe", efficiency));
+        assert!(!anvil_accepts("minecraft:iron_axe", protection));
+        let silk = ENCHANTMENTS
+            .iter()
+            .position(|e| e.name == "minecraft:silk_touch")
+            .unwrap();
+        let unbreaking = ENCHANTMENTS
+            .iter()
+            .position(|e| e.name == "minecraft:unbreaking")
+            .unwrap();
+        assert!(anvil_accepts("minecraft:shears", efficiency));
+        assert!(anvil_accepts("minecraft:shears", silk));
+        assert!(anvil_accepts("minecraft:shears", unbreaking));
+        assert!(!anvil_accepts("minecraft:shears", sharpness));
+        // A 1.8 hoe is not an `ItemTool`, so only unbreaking takes it.
+        assert!(anvil_accepts("minecraft:wooden_hoe", unbreaking));
+        assert!(!anvil_accepts("minecraft:wooden_hoe", efficiency));
+        assert!(!anvil_accepts("minecraft:stone", sharpness));
+        // A plain book is not damageable and takes nothing; the anvil opens
+        // the gate itself when the input is an enchanted book.
+        assert!(!anvil_accepts("minecraft:book", sharpness));
         // Weight and cost windows: protection is the common, cheap one.
         assert_eq!(ENCHANTMENTS[protection].weight, 10);
         assert_eq!(ENCHANTMENTS[protection].first, [1, 12, 23, 34, 45]);
         assert_eq!(ENCHANTMENTS[protection].last, [21, 32, 43, 54, 65]);
         assert_eq!(ENCHANTMENTS[protection].max_level, 4);
+    }
+
+    /// `AnvilScreenHandler.updateResult`'s fee switch. The 1.8 jar stores the
+    /// enchantment's weight in the field `getEnchantmentType()` returns
+    /// (10 for protection and sharpness, 5, 2 and 1 for the rarer ones), so
+    /// the fee is 8 for weight 1, 4 for 2, 2 for 5 and 1 for 10.
+    #[test]
+    fn the_anvil_fee_follows_the_weight() {
+        let i = |name| index_of(name).unwrap();
+        assert_eq!(anvil_fee(i("minecraft:sharpness"), false), 1);
+        assert_eq!(anvil_fee(i("minecraft:protection"), false), 1);
+        assert_eq!(anvil_fee(i("minecraft:smite"), false), 2);
+        assert_eq!(anvil_fee(i("minecraft:feather_falling"), false), 2);
+        assert_eq!(anvil_fee(i("minecraft:unbreaking"), false), 2);
+        assert_eq!(anvil_fee(i("minecraft:blast_protection"), false), 4);
+        assert_eq!(anvil_fee(i("minecraft:thorns"), false), 8);
+        assert_eq!(anvil_fee(i("minecraft:silk_touch"), false), 8);
+        assert_eq!(anvil_fee(i("minecraft:infinity"), false), 8);
+        // An enchanted book halves the fee, with a floor of one.
+        assert_eq!(anvil_fee(i("minecraft:thorns"), true), 4);
+        assert_eq!(anvil_fee(i("minecraft:sharpness"), true), 1);
     }
 
     /// A level the item cannot take draws nothing at all: 1.8 reads the

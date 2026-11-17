@@ -184,8 +184,76 @@ pub fn is_valid_repair_item(
     stack: &ItemStack,
     material: &ItemStack,
 ) -> bool {
+    if horizon_core::target::is_1_8_9() {
+        return repairs_1_8_9(&stack.item, &material.item);
+    }
     e.props(&stack.item)
         .is_some_and(|p| Enchantments::item_in(items, &p.repairable, &material.item))
+}
+
+/// `Item.canRepair` in 1.8. Only `ItemTool` (axes, pickaxes, shovels) and
+/// `ItemSword` name a repair ingredient, and `ItemArmor` names one per
+/// material; the base `Item.canRepair` is false, so bows, fishing rods,
+/// shears and flint and steel cannot be material-repaired even though 26.3's
+/// repairable components say otherwise. Hoes are not an `ItemTool` in 1.8,
+/// so they have no repair ingredient either.
+pub fn repairs_1_8_9(item: &str, ingredient: &str) -> bool {
+    use horizon_items::enchant_1_8_9::ITEMS;
+    let Some(&(_, _, types, _)) = ITEMS.iter().find(|(name, ..)| *name == item) else {
+        return false;
+    };
+    // `EnumEnchantmentType`'s mask says which class the item is in: a sword
+    // takes WEAPON, a tool DIGGER, and armour ALL_ARMOR plus its slot.
+    let armor = types & (1 << 1) != 0;
+    let tool = types & (1 << 7) != 0;
+    let sword = types & (1 << 6) != 0;
+    if armor {
+        // Chainmail is repaired with iron in 1.8; leather, gold, iron and
+        // diamond with their own material.
+        let material = if item.starts_with("minecraft:leather_") {
+            "minecraft:leather"
+        } else if item.starts_with("minecraft:chainmail_") || item.starts_with("minecraft:iron_") {
+            "minecraft:iron_ingot"
+        } else if item.starts_with("minecraft:golden_") {
+            "minecraft:gold_ingot"
+        } else if item.starts_with("minecraft:diamond_") {
+            "minecraft:diamond"
+        } else {
+            return false;
+        };
+        return ingredient == material;
+    }
+    if !(tool || sword) {
+        return false;
+    }
+    if item.starts_with("minecraft:wooden_") {
+        planks(ingredient)
+    } else if item.starts_with("minecraft:stone_") {
+        ingredient == "minecraft:cobblestone"
+    } else if item.starts_with("minecraft:iron_") {
+        ingredient == "minecraft:iron_ingot"
+    } else if item.starts_with("minecraft:golden_") {
+        ingredient == "minecraft:gold_ingot"
+    } else if item.starts_with("minecraft:diamond_") {
+        ingredient == "minecraft:diamond"
+    } else {
+        false
+    }
+}
+
+/// Any of 1.8's six plank items: `ToolMaterialType.WOOD`'s repair
+/// ingredient is the single pre-flattening planks item, so every wood type
+/// matches.
+fn planks(ingredient: &str) -> bool {
+    matches!(
+        ingredient,
+        "minecraft:oak_planks"
+            | "minecraft:spruce_planks"
+            | "minecraft:birch_planks"
+            | "minecraft:jungle_planks"
+            | "minecraft:acacia_planks"
+            | "minecraft:dark_oak_planks"
+    )
 }
 /// `AnvilMenu.calculateIncreasedRepairCost`.
 pub fn increased_repair_cost(cost: u32) -> u32 {
@@ -221,9 +289,17 @@ pub fn anvil_result(
     let mut naming_cost = 0;
     if let Some(addition) = addition {
         // addition.has(STORED_ENCHANTMENTS): an enchanted book (its default
-        // component), or any item given stored enchantments.
-        let using_book = &*addition.item == "minecraft:enchanted_book"
-            || !addition.stored_enchantments().is_empty();
+        // component), or any item given stored enchantments. 1.8 asks for an
+        // enchanted book that actually has enchantments
+        // (`Items.ENCHANTED_BOOK.getEnchantmentNbt(stack).size() > 0`), so an
+        // empty one is not a book there and cannot even be renamed this way.
+        let using_book = if horizon_core::target::is_1_8_9() {
+            &*addition.item == "minecraft:enchanted_book"
+                && !addition.stored_enchantments().is_empty()
+        } else {
+            &*addition.item == "minecraft:enchanted_book"
+                || !addition.stored_enchantments().is_empty()
+        };
         if is_damageable(items, &result) && is_valid_repair_item(e, items, input, addition) {
             let max = max_damage(items, &result);
             let mut repair = (result.damage as i32).min(max / 4);
@@ -267,12 +343,33 @@ pub fn anvil_result(
                     (*level).max(current)
                 };
                 let Some(def) = e.get(id) else { continue };
-                let mut compatible = e.can_enchant(items, id, &input.item);
+                // 1.8 has an index into its own table; `None` keeps 26.3.
+                let table = horizon_core::target::is_1_8_9()
+                    .then(|| horizon_items::enchant_1_8_9::index_of(id))
+                    .flatten();
+                let mut compatible = match table {
+                    Some(index) => horizon_items::enchant_1_8_9::anvil_accepts(&input.item, index),
+                    None => e.can_enchant(items, id, &input.item),
+                };
                 if creative || &*input.item == "minecraft:enchanted_book" {
                     compatible = true;
                 }
                 for (other, _) in &enchantments {
-                    if other != id && !e.compatible(id, other) {
+                    if other == id {
+                        continue;
+                    }
+                    // 1.8 asks the candidate's `differs` about each one
+                    // already on the item, and that relation is asymmetric
+                    // for looting/silk touch and silk touch/luck of the sea.
+                    let conflicts = match table {
+                        Some(index) => {
+                            horizon_items::enchant_1_8_9::index_of(other).is_some_and(|existing| {
+                                !horizon_items::enchant_1_8_9::compatible(index, existing)
+                            })
+                        }
+                        None => !e.compatible(id, other),
+                    };
+                    if conflicts {
                         compatible = false;
                         price += 1;
                     }
@@ -281,14 +378,24 @@ pub fn anvil_result(
                     any_incompatible = true;
                 } else {
                     any_compatible = true;
-                    level = level.min(def.max_level);
+                    let max_level = table.map_or(def.max_level, |index| {
+                        horizon_items::enchant_1_8_9::ENCHANTMENTS[index].max_level
+                    });
+                    level = level.min(max_level);
                     item_data::set_level(&mut enchantments, id, level);
-                    let mut fee = def.anvil_cost as i64;
-                    if using_book {
-                        fee = (fee / 2).max(1);
-                    }
+                    let fee = match table {
+                        Some(index) => horizon_items::enchant_1_8_9::anvil_fee(index, using_book),
+                        None => {
+                            let mut fee = def.anvil_cost as i64;
+                            if using_book {
+                                fee = (fee / 2).max(1);
+                            }
+                            fee
+                        }
+                    };
                     price += fee * i64::from(level);
-                    if input.count > 1 {
+                    // 1.8 has no stack-count rule; 26.3 caps the price.
+                    if input.count > 1 && table.is_none() {
                         price = 40;
                     }
                 }
@@ -334,7 +441,15 @@ pub fn anvil_result(
         let mut base = r
             .repair_cost()
             .max(addition.map_or(0, ItemStack::repair_cost));
-        if naming_cost != price || naming_cost == 0 {
+        // 1.8 raises the prior-work penalty on every operation, a rename-only
+        // one included (`AnvilScreenHandler.updateResult` sets it whenever it
+        // has a result); 26.3 exempts the rename-only case.
+        let raise = if horizon_core::target::is_1_8_9() {
+            true
+        } else {
+            naming_cost != price || naming_cost == 0
+        };
+        if raise {
             base = increased_repair_cost(base);
         }
         r.data_mut().repair_cost = base;
@@ -818,7 +933,9 @@ mod tests {
     fn anvil_combines_and_charges_like_vanilla() {
         let e = sample();
         let items = sample_items();
-        // Sharpness II + Sharpness II book = Sharpness III; book fee 1/2 -> max(1, 0) = 1 per level.
+        // Sharpness II + Sharpness II book = Sharpness III. Sharpness is
+        // weight 10, so 1.8 charges 1 per level and the book halves that with
+        // a floor of one; 26.3's `anvil_cost` is 1 too.
         let r = anvil_result(
             &e,
             &items,
@@ -860,6 +977,176 @@ mod tests {
         assert_eq!(r.cost, 5);
     }
 
+    /// 1.8's combine gate is `Enchantment.isAcceptableItem`, not the
+    /// enchanting table's type mask: an axe takes a sharpness book even
+    /// though the table refuses axes. The fee follows the 1.8 weight switch.
+    #[test]
+    fn anvil_combines_1_8_enchantments_onto_an_axe() {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        let e = sample();
+        let items = sample_items();
+        let axe = ItemStack::new("minecraft:iron_axe", 1);
+        let r = anvil_result(
+            &e,
+            &items,
+            Some(&axe),
+            Some(&book(&[("minecraft:sharpness", 2)])),
+            None,
+            "Iron Axe",
+            false,
+        );
+        let out = r.result.expect("1.8 puts sharpness on an axe");
+        assert_eq!(out.enchantment_level("minecraft:sharpness"), 2);
+        // Weight 10 -> 1 per level, halved for the book with a floor of one.
+        assert_eq!(r.cost, 2);
+        // The table gate is unchanged, which is why the two rules differ.
+        let sharpness = horizon_items::enchant_1_8_9::index_of("minecraft:sharpness").unwrap();
+        assert!(!horizon_items::enchant_1_8_9::can_apply(
+            "minecraft:iron_axe",
+            sharpness
+        ));
+        // Thorns is weight 1: 8 per level, 4 through a book.
+        let helmet = ItemStack::new("minecraft:diamond_helmet", 1);
+        let r = anvil_result(
+            &e,
+            &items,
+            Some(&helmet),
+            Some(&book(&[("minecraft:thorns", 1)])),
+            None,
+            "Diamond Helmet",
+            false,
+        );
+        assert_eq!(r.cost, 4);
+        assert_eq!(r.result.unwrap().enchantment_level("minecraft:thorns"), 1);
+        // Sharpness does not go onto armour.
+        assert!(
+            anvil_result(
+                &e,
+                &items,
+                Some(&helmet),
+                Some(&book(&[("minecraft:sharpness", 1)])),
+                None,
+                "Diamond Helmet",
+                false
+            )
+            .result
+            .is_none()
+        );
+    }
+
+    /// 1.8's `differs` is asymmetric for the loot enchantments: a silk touch
+    /// book goes onto a looting book, but a looting book does not go onto a
+    /// silk touch one.
+    #[test]
+    fn anvil_keeps_the_1_8_loot_conflict_direction() {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        let e = sample();
+        let items = sample_items();
+        let looting = book(&[("minecraft:looting", 1)]);
+        let silk = book(&[("minecraft:silk_touch", 1)]);
+        let level = |out: &ItemStack, id: &str| {
+            out.crafting_enchantments()
+                .iter()
+                .find(|(e, _)| &**e == id)
+                .map_or(0, |(_, l)| *l)
+        };
+        let r = anvil_result(&e, &items, Some(&looting), Some(&silk), None, "x", false);
+        let out = r.result.expect("silk touch combines onto looting");
+        assert_eq!(level(&out, "minecraft:silk_touch"), 1);
+        assert_eq!(level(&out, "minecraft:looting"), 1);
+        assert_eq!(r.cost, 4);
+        let r = anvil_result(&e, &items, Some(&silk), Some(&looting), None, "x", false);
+        assert!(
+            r.result.is_none(),
+            "a looting book must not combine onto silk touch"
+        );
+    }
+
+    /// `Item.canRepair` in 1.8: only tools, swords and armour name an
+    /// ingredient, so bows, rods, shears and flint and steel cannot be
+    /// material-repaired even though their 26.3 repairable components exist.
+    #[test]
+    fn anvil_repair_items_are_1_8() {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        let e = sample();
+        let items = sample_items();
+        let can = |item: &str, ingredient: &str| {
+            is_valid_repair_item(
+                &e,
+                &items,
+                &ItemStack::new(item, 1),
+                &ItemStack::new(ingredient, 1),
+            )
+        };
+        assert!(can("minecraft:iron_sword", "minecraft:iron_ingot"));
+        assert!(can("minecraft:wooden_pickaxe", "minecraft:birch_planks"));
+        assert!(can("minecraft:stone_axe", "minecraft:cobblestone"));
+        assert!(can("minecraft:golden_shovel", "minecraft:gold_ingot"));
+        assert!(can("minecraft:diamond_sword", "minecraft:diamond"));
+        assert!(can("minecraft:diamond_helmet", "minecraft:diamond"));
+        assert!(can(
+            "minecraft:chainmail_chestplate",
+            "minecraft:iron_ingot"
+        ));
+        assert!(can("minecraft:leather_boots", "minecraft:leather"));
+        assert!(can("minecraft:golden_leggings", "minecraft:gold_ingot"));
+        // Wrong tier, and the classes with no `canRepair` at all.
+        assert!(!can("minecraft:iron_sword", "minecraft:diamond"));
+        assert!(!can("minecraft:bow", "minecraft:string"));
+        assert!(!can("minecraft:fishing_rod", "minecraft:string"));
+        assert!(!can("minecraft:shears", "minecraft:iron_ingot"));
+        assert!(!can("minecraft:flint_and_steel", "minecraft:iron_ingot"));
+        assert!(!can("minecraft:iron_hoe", "minecraft:iron_ingot"));
+    }
+
+    /// 1.8's second-slot book gate needs enchantments on the book
+    /// (`getEnchantmentNbt(stack).size() > 0`), so an empty enchanted book is
+    /// not a book there and cannot combine or rename through the anvil.
+    #[test]
+    fn anvil_ignores_an_empty_enchanted_book() {
+        if !horizon_core::target::is_1_8_9() {
+            return;
+        }
+        let e = sample();
+        let items = sample_items();
+        let empty = ItemStack::new("minecraft:enchanted_book", 1);
+        let r = anvil_result(
+            &e,
+            &items,
+            Some(&empty),
+            Some(&empty),
+            Some("Named"),
+            "Enchanted Book",
+            false,
+        );
+        assert!(r.result.is_none());
+        // A book with an entry is 1.8's enchanted book and does combine.
+        let full = book(&[("minecraft:unbreaking", 1)]);
+        let r = anvil_result(
+            &e,
+            &items,
+            Some(&empty),
+            Some(&full),
+            None,
+            "Enchanted Book",
+            false,
+        );
+        let out = r.result.expect("an enchanted book combines onto a book");
+        assert_eq!(
+            out.crafting_enchantments()
+                .iter()
+                .find(|(id, _)| &**id == "minecraft:unbreaking")
+                .map_or(0, |(_, level)| *level),
+            1
+        );
+    }
+
     #[test]
     fn anvil_rename_and_prior_work() {
         let e = sample();
@@ -879,8 +1166,14 @@ mod tests {
         assert!(r.only_renaming);
         let out = r.result.unwrap();
         assert_eq!(out.custom_name().as_deref(), Some("Excalibur"));
-        // Renaming alone does not raise the penalty.
-        assert_eq!(out.repair_cost(), 7);
+        // 1.8 raises the penalty on a rename too (`2 * 7 + 1`); 26.3 leaves
+        // a rename-only result at its old penalty.
+        let renamed_cost = if horizon_core::target::is_1_8_9() {
+            15
+        } else {
+            7
+        };
+        assert_eq!(out.repair_cost(), renamed_cost);
         // Same name: nothing to do.
         assert!(
             anvil_result(

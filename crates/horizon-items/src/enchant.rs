@@ -906,6 +906,21 @@ pub mod tests {
                 "minecraft:feather_falling",
                 json!({"anvil_cost":2,"max_cost":{"base":11,"per_level_above_first":6},"max_level":4,"min_cost":{"base":5,"per_level_above_first":6},"supported_items":"#minecraft:enchantable/foot_armor","weight":5,"effects":{"minecraft:damage_protection":[{"effect":{"type":"minecraft:add","value":{"type":"minecraft:linear","base":3.0,"per_level_above_first":3.0}},"requirements":{"type":"minecraft:damage_source_properties","predicate":{"tags":[{"expected":true,"id":"#minecraft:is_fall"},{"expected":false,"id":"#minecraft:bypasses_invulnerability"}]}}}]}}),
             ),
+            // The anvil's fee and conflict rules are keyed by the 1.8 table,
+            // but `anvil_result` still looks the id up here: the tests that
+            // combine thorns, silk touch and looting need their 26.3 rows.
+            (
+                "minecraft:thorns",
+                json!({"anvil_cost":8,"max_cost":{"base":60,"per_level_above_first":20},"max_level":3,"min_cost":{"base":10,"per_level_above_first":20},"supported_items":"#minecraft:enchantable/armor","weight":1}),
+            ),
+            (
+                "minecraft:silk_touch",
+                json!({"anvil_cost":8,"max_cost":{"base":65,"per_level_above_first":0},"max_level":1,"min_cost":{"base":15,"per_level_above_first":0},"supported_items":"#minecraft:enchantable/mining_looted","weight":1}),
+            ),
+            (
+                "minecraft:looting",
+                json!({"anvil_cost":4,"max_cost":{"base":65,"per_level_above_first":9},"max_level":3,"min_cost":{"base":15,"per_level_above_first":9},"supported_items":"#minecraft:enchantable/weapon","weight":2}),
+            ),
         ];
         let list: Vec<Enchantment> = defs
             .iter()

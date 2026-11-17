@@ -17,9 +17,11 @@ The dump `tools/EnchantProbe18.java` writes on the real 1.8.9 server jar is:
     I <item> <enchantability> <type mask>
     T <item> <level> <seed> <id:level,...> <nextInt(1000)>
 
-The `A` mask's bit `n` is `Enchantment.canApply` for the `n`-th enchantment
-in ascending id order; it is the enchanting table's gate and only reference
-here. `buildEnchantmentList` itself gates on the enchantment's
+The `A` mask's bit `n` is `Enchantment.isAcceptableItem` (yarn's name for
+the 1.8 `canApply(ItemStack)`) for the `n`-th enchantment in ascending id
+order: the anvil's combine gate. Its overrides make an axe take the damage
+enchantments and shears take efficiency, silk touch and unbreaking, which the
+type mask refuses. `buildEnchantmentList` itself gates on the enchantment's
 `EnumEnchantmentType` against the `I` line's type mask, which is what
 `can_apply` uses (a book bypasses the gate, as the jar does). The `T` lines
 pin the whole draw sequence: the seed, the picked levels and the
@@ -86,6 +88,7 @@ def main() -> None:
 
     enchantments: list[dict] = []
     items: list[tuple[str, int, int]] = []
+    accepts: dict[str, int] = {}
     vectors: list[tuple] = []
     for line in args.dump.read_text().splitlines():
         kind, _, rest = line.partition(" ")
@@ -103,6 +106,9 @@ def main() -> None:
                     "compatible": [int(v) for v in f[16:]],
                 }
             )
+        elif kind == "A":
+            name, mask = rest.split(" ")
+            accepts[name] = int(mask)
         elif kind == "I":
             name, enchantability, types = rest.split(" ")
             items.append((name, int(enchantability), int(types)))
@@ -115,10 +121,14 @@ def main() -> None:
             )
             vectors.append((f[0], int(f[1]), int(f[2]), listing, int(f[4])))
 
-    if len(enchantments) != 25 or len(items) != 337:
+    if len(enchantments) != 25 or len(items) != 337 or len(accepts) != 337:
         raise SystemExit(
-            f"unexpected dump: {len(enchantments)} enchantments, {len(items)} items"
+            f"unexpected dump: {len(enchantments)} enchantments, "
+            f"{len(items)} items, {len(accepts)} accept rows"
         )
+    missing = {name for name, _, _ in items} ^ set(accepts)
+    if missing:
+        raise SystemExit(f"items without a matching A row: {sorted(missing)}")
     order = {e["id"]: i for i, e in enumerate(enchantments)}
 
     out = [HEADER, STRUCT]
@@ -146,14 +156,22 @@ def main() -> None:
     out.append("];\n")
     out.append(
         "\n/// 1.8's items in registry order: `Item.b()` (the enchantability\n"
-        "/// `buildEnchantmentList` starts from) and the `EnumEnchantmentType`\n"
-        "/// mask from the probe's `I` line. Bit `n` is set when\n"
-        "/// `EnchantmentType.values()[n]` accepts the item. A book takes every\n"
-        "/// entry, which the caller adds.\n"
-        f"pub const ITEMS: [(&str, u32, u32); {len(items)}] = [\n"
+        "/// `buildEnchantmentList` starts from), the `EnumEnchantmentType`\n"
+        "/// mask from the probe's `I` line, and `Enchantment.isAcceptableItem`\n"
+        "/// from its `A` line. In the type mask bit `n` is set when\n"
+        "/// `EnchantmentType.values()[n]` accepts the item; `buildEnchantmentList`\n"
+        "/// gates on the enchantment's type through it. In the accept mask bit\n"
+        "/// `n` is set when the `n`-th entry of `ENCHANTMENTS` takes the item,\n"
+        "/// overrides included: an axe takes the damage enchantments and shears\n"
+        "/// take efficiency, silk touch and unbreaking, which the type mask\n"
+        "/// refuses. A book takes every entry, which the caller adds.\n"
+        f"pub const ITEMS: [(&str, u32, u32, u32); {len(items)}] = [\n"
     )
     for name, enchantability, types in items:
-        out.append(f"    (\"{name}\", {enchantability}, 0x{types:08x}),\n")
+        out.append(
+            f'    ("{name}", {enchantability}, 0x{types:08x}, '
+            f'0x{accepts[name]:08x}),\n'
+        )
     out.append("];\n")
     out.append(
         "\n/// `buildEnchantmentList` outputs for a known seed: the item, the level\n"
