@@ -35,10 +35,34 @@ pub fn stack(id: i16, count: i8, damage: i16, nbt: &Tag) -> Option<ItemStack> {
     // compound and creates the `Potion` name there. A 1.8 potion carries its
     // potion in `Damage`, not in NBT, so give it the empty compound vanilla's
     // fixer expects (`ItemStack.setTag(new NBTTagCompound())`).
+    //
+    // The fixer's `damage & 127` loses bits 13 and 14, so damage 8192 (sugar,
+    // ghast tear or spider eye on a water bottle) reads as water, and 16384
+    // (gunpowder on that bottle) as a splash water bottle. Name those two
+    // here: 1.8 has no splash water, so 16384 is a splash mundane. The
+    // fixer's own bit-14 item id is applied only when it writes the name, so
+    // a splash bottle is renamed here too.
+    let mundane = id == 373 && damage & 0x7F == 0 && damage & 0x6000 != 0;
+    let potion_named = matches!(nbt.get("Potion"), Some(Tag::String(_)));
+    if mundane && !potion_named && damage & 0x4000 != 0 {
+        entries[0].1 = Tag::String("minecraft:splash_potion".into());
+    }
     if id == 373 && matches!(nbt, Tag::End) {
-        entries.push(("tag", Tag::compound(std::iter::empty::<(&str, Tag)>())));
+        let tag = if mundane && !potion_named {
+            Tag::compound([("Potion", Tag::String("minecraft:mundane".into()))])
+        } else {
+            Tag::compound(std::iter::empty::<(&str, Tag)>())
+        };
+        entries.push(("tag", tag));
     } else if !matches!(nbt, Tag::End) {
-        entries.push(("tag", nbt.clone()));
+        let mut tag = nbt.clone();
+        if mundane
+            && !potion_named
+            && let Tag::Compound(fields) = &mut tag
+        {
+            fields.insert("Potion".into(), Tag::String("minecraft:mundane".into()));
+        }
+        entries.push(("tag", tag));
     }
     let mut tag = Tag::compound(entries);
     datafix::update(Ty::ItemStack, &mut tag, -1, CURRENT);
@@ -596,10 +620,12 @@ mod tests {
         egg.data_mut().custom_name = Some(Tag::String("Bob".into()));
         let (id, count, damage, tag) = legacy(egg);
         assert_eq!((id, count, damage), (383, 1, 54));
-        assert_eq!(
-            tag.get("display").and_then(|d| d.get("Name")),
-            Some(&Tag::String("Bob".into()))
-        );
+        // `display.Name` is a JSON text component (1.8 keeps the whole chat
+        // component), not the bare string.
+        let Some(Tag::String(display)) = tag.get("display").and_then(|d| d.get("Name")) else {
+            panic!("no display name in {tag:?}");
+        };
+        assert!(display.to_string_lossy().contains("Bob"), "{display:?}");
         let back = stack(383, 1, 54, &tag).expect("renamed egg");
         assert_eq!(back.custom_name().as_deref(), Some("Bob"));
         // 1.8's egg has no `EntityTag` field: the class never reads one, so a
@@ -779,6 +805,19 @@ mod tests {
         assert_eq!(water.potion(), Some("minecraft:water"));
         assert_eq!(legacy(water), (373, 1, 0, Tag::End));
 
+        // Bit 13 with no effect bits is the brewed mundane potion. The
+        // fixer's `damage & 127` would read it as water, so `stack` names it
+        // before the pipeline runs.
+        let mundane = stack(373, 1, 8192, &Tag::End).expect("mundane");
+        assert_eq!(&*mundane.item, "minecraft:potion");
+        assert_eq!(mundane.potion(), Some("minecraft:mundane"));
+        assert_eq!(legacy(mundane), (373, 1, 8192, Tag::End));
+        // 1.8 has no splash water: 16384 is gunpowder on a mundane bottle.
+        let splash_mundane = stack(373, 1, 16384, &Tag::End).expect("splash mundane");
+        assert_eq!(&*splash_mundane.item, "minecraft:splash_potion");
+        assert_eq!(splash_mundane.potion(), Some("minecraft:mundane"));
+        assert_eq!(legacy(splash_mundane), (373, 1, 16384, Tag::End));
+
         // A potion with other NBT keeps it; the potion itself stays in Damage.
         let named = stack(
             373,
@@ -801,6 +840,12 @@ mod tests {
         let splash =
             ItemStack::new("minecraft:splash_potion", 1).with_potion("minecraft:long_swiftness");
         assert_eq!(legacy(splash), (373, 1, 16450, Tag::End));
+        // A mundane bottle is brewed, so it keeps bit 13 (not the 1.7.10 64).
+        let mundane = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:mundane");
+        assert_eq!(legacy(mundane), (373, 1, 8192, Tag::End));
+        let splash_mundane =
+            ItemStack::new("minecraft:splash_potion", 1).with_potion("minecraft:mundane");
+        assert_eq!(legacy(splash_mundane), (373, 1, 16384, Tag::End));
         // 1.9+ potions have no 1.8 damage; they encode as a water bottle rather
         // than being dropped (documented 1.8 debt).
         let turtle = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:turtle_master");

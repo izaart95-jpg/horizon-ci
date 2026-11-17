@@ -690,9 +690,19 @@ mod tests {
             "minecraft:splash_potion"
         );
 
-        // Mundane + gunpowder is likewise no change.
+        // Mundane + gunpowder is a change: the result is throwable and the
+        // bottle is not, which 1.8 checks before it compares effect lists.
         stand.items[0] = Some(potion("minecraft:mundane"));
-        assert!(!stand.brewable_1_8_9());
+        assert!(stand.brewable_1_8_9());
+        stand.tick_1_8_9();
+        assert_eq!(stand.brew_time, 400);
+        for _ in 0..400 {
+            stand.tick_1_8_9();
+        }
+        let bottle = stand.items[0].as_ref().unwrap();
+        assert_eq!(&*bottle.item, "minecraft:splash_potion");
+        assert_eq!(bottle.potion(), Some("minecraft:mundane"));
+        assert!(stand.items[3].is_none());
     }
 
     #[test]

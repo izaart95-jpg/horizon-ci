@@ -609,14 +609,14 @@ attribute modifiers (speed +20% and slowness −15% per level multiplied-total,
 strength +130% multiplied-total, weakness −0.5 added, health boost +4 added;
 haste, jump boost and absorption grant none). Potion items encode as id 373
 with the bitmask in the slot's `Damage` and no `Potion` NBT string; decoding
-adds the empty tag compound `ItemPotionFix` needs. Debt: the datafixer's
-`ITEM_POTIONS` maps damage 8192 (the sugar mundane) to `minecraft:water`, so
-that potion re-encodes as a water bottle and a splash mundane cannot be brewed
-from a decoded one; `PotionSlot.onTakeItem` cannot grant the 1.8 `potion`
-achievement because achievements need a 1.8 server; and a brewed bottle keeps
-its NBT through `setDamage`, which the transmute path preserves, but a custom
-name or `CustomPotionEffects` on a stack that changes item id is still only as
-good as the component round trip.
+adds the empty tag compound `ItemPotionFix` needs, and names the two values the
+fixer's `damage & 127` would read as water (8192, the sugar/ghast-tear/spider-eye
+mundane, and 16384, its splash form) so they decode as `minecraft:mundane` and
+re-encode as the same damage. Debt: `PotionSlot.onTakeItem` cannot grant the 1.8
+`potion` achievement because achievements need a 1.8 server; and a brewed bottle
+keeps its NBT through `setDamage`, which the transmute path preserves, but a
+custom name or `CustomPotionEffects` on a stack that changes item id is still
+only as good as the component round trip.
 
 Fishing rolls 1.8's own pools instead of the 26.3 loot tables: junk (11
 entries, weight 83), treasure (6 entries, weight 6) and fish (cod 60, salmon

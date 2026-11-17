@@ -357,7 +357,9 @@ pub fn legacy_damage(potion: Option<&str>, splash: bool) -> Option<i32> {
         "water" => 0,
         "awkward" => 16,
         "thick" => 32,
-        "mundane" => 64,
+        // The 1.8 mundane potion is brewed, so it carries bit 13 (the sugar,
+        // ghast tear or spider eye marker). Damage 64 is its 1.7.10 spelling.
+        "mundane" => 0x2000,
         // Bits 1..4: the effect flags. Bit 13 marks every brewed effect potion.
         "regeneration" => 0x2000 | 1,
         "swiftness" => 0x2000 | 2,
@@ -405,7 +407,15 @@ pub fn legacy_damage(potion: Option<&str>, splash: bool) -> Option<i32> {
 
 /// The current potion name of a 1.8 damage value (the datafixer's `ITEM_POTIONS`
 /// low-seven-bit entry), `None` when the low bits name no potion.
+///
+/// The fixer's `damage & 127` loses bits 13 and 14, so a brewed potion with no
+/// effect bits (8192: sugar, ghast tear or spider eye on a water bottle) and
+/// its splash form (16384: gunpowder on that bottle) read as water. 1.8 has no
+/// splash water, so both are the 1.8 mundane potion.
 pub fn potion_name(damage: i32) -> Option<&'static str> {
+    if damage & 0x7F == 0 && damage & 0x6000 != 0 {
+        return Some("minecraft:mundane");
+    }
     horizon_world::datafix::flat_tables::ITEM_POTIONS
         .iter()
         .find(|&&(d, _)| d == damage & 127)
@@ -890,7 +900,7 @@ mod tests {
             ("minecraft:water", 0),
             ("minecraft:awkward", 16),
             ("minecraft:thick", 32),
-            ("minecraft:mundane", 64),
+            ("minecraft:mundane", 8192),
             ("minecraft:regeneration", 8193),
             ("minecraft:swiftness", 8194),
             ("minecraft:strong_swiftness", 8226),
@@ -914,6 +924,14 @@ mod tests {
             legacy_damage(Some("minecraft:long_swiftness"), true),
             Some(16450)
         );
+        // A splash mundane is gunpowder on a mundane bottle: bit 14 only.
+        assert_eq!(legacy_damage(Some("minecraft:mundane"), true), Some(16384));
+        assert_eq!(potion_name(16384), Some("minecraft:mundane"));
+        // Damage 64 is the same potion's 1.7.10 spelling, and 0 has no bit 13
+        // so it stays water.
+        assert_eq!(potion_name(64), Some("minecraft:mundane"));
+        assert_eq!(potion_name(0), Some("minecraft:water"));
+        assert_eq!(potion_name(0x2000 | 0x10), Some("minecraft:awkward"));
         // Potions added after 1.8 have no legacy damage.
         assert_eq!(legacy_damage(Some("minecraft:turtle_master"), false), None);
         assert_eq!(legacy_damage(Some("minecraft:luck"), false), None);
