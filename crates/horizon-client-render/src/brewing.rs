@@ -654,6 +654,43 @@ mod tests {
         assert!(stand.items[3].is_none());
     }
 
+    /// 1.8's `ItemStack.setDamage` rewrites `Damage` and leaves the stack's
+    /// NBT alone, so a splash transmute keeps a custom name and
+    /// `CustomPotionEffects`.
+    #[test]
+    fn one_eight_splash_keeps_the_stacks_own_nbt() {
+        use horizon_world::nbt::{Compound, JavaString, Tag};
+        let mut bottle = potion("minecraft:swiftness");
+        bottle.data_mut().custom_name = Some(Tag::String(JavaString::from("Fleet")));
+        bottle.data_mut().potion_extra.push((
+            "custom_effects".into(),
+            Tag::List(vec![Tag::Compound(Compound::from([
+                (
+                    JavaString::from("id"),
+                    Tag::String(JavaString::from("minecraft:speed")),
+                ),
+                (JavaString::from("duration"), Tag::Int(200)),
+                (JavaString::from("amplifier"), Tag::Int(1)),
+            ]))]),
+        ));
+        let mut stand = BrewingStand::new();
+        stand.items[0] = Some(bottle);
+        stand.items[3] = Some(ItemStack::new("minecraft:gunpowder", 1));
+        assert!(stand.brewable_1_8_9());
+        stand.tick_1_8_9();
+        for _ in 0..400 {
+            stand.tick_1_8_9();
+        }
+        let bottle = stand.items[0].as_ref().unwrap();
+        assert_eq!(&*bottle.item, "minecraft:splash_potion");
+        assert_eq!(bottle.potion(), Some("minecraft:swiftness"));
+        assert_eq!(bottle.custom_name().as_deref(), Some("Fleet"));
+        assert_eq!(
+            bottle.custom_potion_effects(),
+            vec![("minecraft:speed".to_owned(), 200, 1)]
+        );
+    }
+
     #[test]
     fn one_eight_reagents_are_consumed_one_at_a_time() {
         // 1.8 `Item.isFood()` is `recipeRemainder != null`, which no reagent

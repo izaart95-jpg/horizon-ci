@@ -417,6 +417,20 @@ fn legacy_tag(data: &crate::item_data::StackData, potion_tag: bool) -> Tag {
     if potion_tag && let Some(potion) = &data.potion {
         entries.push(("Potion", Tag::String((&**potion).into())));
     }
+    // `PotionEffect.writeCustomPotionEffectToNBT`: a potion's own effects live
+    // in `CustomPotionEffects` whatever its `Damage` says, and 1.8 writes them
+    // even when the potion's name sits in `Damage`.
+    if let Some(Tag::List(effects)) = data
+        .potion_extra
+        .iter()
+        .find(|(key, _)| key == "custom_effects")
+        .map(|(_, value)| value)
+    {
+        let list: Vec<Tag> = effects.iter().filter_map(custom_effect_tag).collect();
+        if !list.is_empty() {
+            entries.push(("CustomPotionEffects", Tag::List(list)));
+        }
+    }
     // Book contents live in the item's own compound in 1.8, not in
     // components: a writable book's pages, a written book's signature.
     if !data.writable_pages.is_empty() {
@@ -431,6 +445,40 @@ fn legacy_tag(data: &crate::item_data::StackData, potion_tag: bool) -> Tag {
         entries.push(("pages", book_pages(&book.pages)));
     }
     Tag::compound(entries)
+}
+
+/// One `PotionEffect.writeCustomPotionEffectToNBT`: `Id` and `Amplifier` are
+/// bytes, `Duration` an int, `Ambient` and `ShowParticles` bytes. The current
+/// component also carries `show_icon`, which 1.8 did not have.
+fn custom_effect_tag(effect: &Tag) -> Option<Tag> {
+    let Tag::String(id) = effect.get("id")? else {
+        return None;
+    };
+    let id = horizon_client_core::potions_1_8_9::effect_id(id)?;
+    let number = |key: &str| {
+        effect.get(key).and_then(|tag| match tag {
+            Tag::Byte(v) => Some(i64::from(*v)),
+            Tag::Short(v) => Some(i64::from(*v)),
+            Tag::Int(v) => Some(i64::from(*v)),
+            Tag::Long(v) => Some(*v),
+            _ => None,
+        })
+    };
+    // `MobEffectInstance`'s codec defaults: duration and amplifier 0, ambient
+    // false, particles true.
+    let duration = number("duration")
+        .unwrap_or(0)
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let amplifier = number("amplifier").unwrap_or(0).clamp(0, 127) as i8;
+    let ambient = number("ambient").unwrap_or(0) != 0;
+    let show_particles = number("show_particles").unwrap_or(1) != 0;
+    Some(Tag::compound([
+        ("Id", Tag::Byte(id as i8)),
+        ("Amplifier", Tag::Byte(amplifier)),
+        ("Duration", Tag::Int(duration)),
+        ("Ambient", Tag::Byte(i8::from(ambient))),
+        ("ShowParticles", Tag::Byte(i8::from(show_particles))),
+    ]))
 }
 
 /// The `BlockEntityTag` a 1.8 banner item carries: `Base` is the item's
@@ -571,6 +619,38 @@ mod tests {
         assert_eq!(legacy_name(165), Some("minecraft:slime"));
         assert_eq!(legacy_item_name(424), Some("minecraft:cooked_mutton"));
         assert_eq!(legacy_id("minecraft:slime_block"), Some((165, 0)));
+    }
+
+    /// A potion's `CustomPotionEffects` ride through the stack: the 1.8 reader
+    /// fixes them into `potion_contents.custom_effects`, and the writer puts
+    /// `PotionEffect.writeCustomPotionEffectToNBT`'s fields back.
+    #[test]
+    fn a_custom_potion_keeps_its_effects_in_1_8_nbt() {
+        let mut potion = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:swiftness");
+        potion.data_mut().potion_extra.push((
+            "custom_effects".into(),
+            Tag::List(vec![Tag::compound([
+                ("id", Tag::String("minecraft:speed".into())),
+                ("duration", Tag::Int(200)),
+                ("amplifier", Tag::Int(1)),
+            ])]),
+        ));
+        let (id, count, damage, tag) = legacy_stack(&potion).expect("potion");
+        assert_eq!((id, count), (373, 1));
+        let Some(Tag::List(effects)) = tag.get("CustomPotionEffects") else {
+            panic!("CustomPotionEffects: {tag:?}");
+        };
+        let effect = &effects[0];
+        assert_eq!(effect.get("Id"), Some(&Tag::Byte(1)));
+        assert_eq!(effect.get("Amplifier"), Some(&Tag::Byte(1)));
+        assert_eq!(effect.get("Duration"), Some(&Tag::Int(200)));
+        assert_eq!(effect.get("Ambient"), Some(&Tag::Byte(0)));
+        assert_eq!(effect.get("ShowParticles"), Some(&Tag::Byte(1)));
+        let back = stack(373, 1, damage, &tag).expect("round trip");
+        assert_eq!(
+            back.custom_potion_effects(),
+            vec![("minecraft:speed".to_owned(), 200, 1)]
+        );
     }
 
     #[test]

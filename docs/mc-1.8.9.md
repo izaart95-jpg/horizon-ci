@@ -629,9 +629,11 @@ re-encode as the same damage. Taking a bottle from a brewing stand grants the
 1.8 `potion` achievement when the potion's damage is above 0, as
 `SlotBrewingStandPotion` does: a normal non-water potion or any splash potion
 (bit 14), on the single player server thread, a LAN host or a dedicated server.
-Debt: a brewed bottle keeps its NBT through `setDamage`, which the transmute
-path preserves, but a custom name or `CustomPotionEffects` on a stack that
-changes item id is still only as good as the component round trip.
+1.8's `setDamage` only rewrites `Damage`, so a brewed bottle keeps its NBT
+through the splash transmute: a custom name and `CustomPotionEffects` survive,
+and the 1.8 writer emits the effects the way
+`PotionEffect.writeCustomPotionEffectToNBT` does (`Id`, `Amplifier`,
+`Duration`, `Ambient`, `ShowParticles`), so a save round trip keeps them.
 
 Fishing rolls 1.8's own pools instead of the 26.3 loot tables: junk (11
 entries, weight 83), treasure (6 entries, weight 6) and fish (cod 60, salmon
@@ -1068,6 +1070,8 @@ Last full run in this tree (Linux, `--no-default-features` for the client):
 | `cargo test -p horizon-items --lib enchant_1_8_9` | 5 passed (the jar's accept/apply masks, the weight-keyed anvil fee, the generated tables) |
 | `cargo test -p horizon-client --lib stations::tests` | 11 passed (1.8 fee, combine direction and gate, repair materials, the empty-book rule, the rename penalty) |
 | 1.8.9 `MinecraftClient.handleKeybinds` bytecode | the inventory key sends `OPEN_INVENTORY` and opens the survival screen in every game mode; the remote path sends it too (internal action 3, wire action 2) |
+| `cargo test -p horizon-client-render --lib one_eight_splash_keeps_the_stacks_own_nbt` | passed: the splash transmute keeps the custom name and the custom speed effect |
+| `cargo test -p horizon-items --lib a_custom_potion_keeps_its_effects_in_1_8_nbt` | passed: `Id` 1, `Amplifier` 1, `Duration` 200, `Ambient` 0, `ShowParticles` 1, and the reader gives the effect back |
 
 Run `horizon-client-render` serially: its GPU tests can crash when several run
 at once. The ignored tests need prepared resources.
