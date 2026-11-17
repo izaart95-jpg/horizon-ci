@@ -810,8 +810,9 @@ fortress only. Debt: the 26.3 generator
 still decides which biome a column has (the 1.8 list is selected by that biome
 name), its decoration random stream is not 1.8's yet, so the draws before the
 pack (and the pack itself) cannot be seed-identical, 1.8 village
-generation is unported, and `findSpawnLocation` rescans the column per category
-instead of reusing the chunk heightmap. `isFullCube` and `World.isOpaque` carry
+generation is unported. `findSpawnLocation` bounds its opacity scan with the
+kept surface heightmap instead of walking the whole column; `isFullCube` and
+`World.isOpaque` carry
 1.8's own exceptions over the exported occlusion flags: the redstone block is
 not a full cube (it emits redstone power), while top-half stairs and slabs,
 hoppers and the tallest snow layer are opaque.

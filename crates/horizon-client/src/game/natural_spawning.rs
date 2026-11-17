@@ -313,7 +313,11 @@ impl spawn18::SpawnLevel18 for GameLevel<'_, '_> {
         SpawnLevel::sea_level(&self.w)
     }
     fn highest_block_y(&self, x: i32, z: i32) -> i32 {
-        spawn18::highest_block_y(self, x, z)
+        // `Chunk.getHighestBlockY` reads the chunk's opacity heightmap; the
+        // kept WORLD_SURFACE map holds one above the column's top non-air
+        // block, which bounds it, so scan down from there instead of y=255.
+        let top = SpawnLevel::world_surface(&self.w, x, z) - 1;
+        spawn18::highest_block_y_below(self, x, z, top)
     }
     fn is_flat(&self) -> bool {
         self.game.end.locator().is_some_and(|t| t.is_flat())

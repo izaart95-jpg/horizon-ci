@@ -356,13 +356,29 @@ pub fn brightness<L: SpawnLevel18 + ?Sized>(l: &L, x: i32, y: i32, z: i32) -> f3
 /// and the partial blocks that 1.8 gave an explicit opacity (water, ice,
 /// leaves, cobwebs, farmland, slabs, stairs) as 1; glass, snow layers,
 /// carpets and plants export as 0.
-pub fn highest_block_y<L: SpawnLevel18 + ?Sized>(l: &L, x: i32, z: i32) -> i32 {
-    for y in (0..=255).rev() {
-        if l.facts().get(l.state(x, y, z)).dampening != 0 {
+///
+/// `top` is the highest block the scan has to look at: every block above it
+/// is air, so it never carries a dampening. The caller passes the kept
+/// surface heightmap's value minus one, which bounds the scan the way a
+/// chunk's cached heightmap does.
+pub fn highest_block_y_below<L: SpawnLevel18 + ?Sized>(l: &L, x: i32, z: i32, top: i32) -> i32 {
+    top_opaque_below(top, |y| l.facts().get(l.state(x, y, z)).dampening)
+}
+
+/// The scan behind [`highest_block_y_below`], over the column's dampening.
+fn top_opaque_below(top: i32, mut dampening: impl FnMut(i32) -> u8) -> i32 {
+    for y in (0..=top.min(255)).rev() {
+        if dampening(y) != 0 {
             return y + 1;
         }
     }
     0
+}
+
+/// `Chunk.getHighestBlockY` over the whole column, for a level without a
+/// heightmap to bound it.
+pub fn highest_block_y<L: SpawnLevel18 + ?Sized>(l: &L, x: i32, z: i32) -> i32 {
+    highest_block_y_below(l, x, z, 255)
 }
 
 /// `Chunk.hasDirectSunlight`: the block is at or above the heightmap.
@@ -824,6 +840,34 @@ mod tests {
         assert!(full_cube(true, "minecraft:stone"));
         assert!(!full_cube(true, "minecraft:redstone_block"));
         assert!(!full_cube(false, "minecraft:glass"));
+    }
+
+    #[test]
+    fn the_height_scan_starts_at_the_bound() {
+        // Only the stone at 63 is opaque; the glass at 70 and the plants
+        // above it are not. The kept surface map reads 71 for this column,
+        // so the bounded scan sees the same height as the full column.
+        fn dampening(y: i32) -> u8 {
+            if y == 63 { 15 } else { 0 }
+        }
+        assert_eq!(top_opaque_below(70, dampening), 64);
+        // A bound at the opaque block itself still finds it.
+        assert_eq!(top_opaque_below(63, dampening), 64);
+        // A bound below it does not: callers pass surface - 1 for that
+        // reason.
+        assert_eq!(top_opaque_below(62, dampening), 0);
+        // A column of air and glass has no height.
+        assert_eq!(top_opaque_below(70, |_| 0), 0);
+        // The scan never reads above y=255.
+        let mut seen = Vec::new();
+        assert_eq!(
+            top_opaque_below(400, |y| {
+                seen.push(y);
+                0
+            }),
+            0
+        );
+        assert_eq!(seen.first(), Some(&255));
     }
 
     #[test]
