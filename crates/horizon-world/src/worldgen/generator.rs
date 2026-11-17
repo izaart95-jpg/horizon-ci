@@ -2232,7 +2232,10 @@ impl<R: RandomSource> SurfaceQueries<'_, '_, R> {
         Ok(&mut self.temperatures[id.0 as usize])
     }
 }
-impl<R: RandomSource> MaterialSurfaceQueries for SurfaceQueries<'_, '_, R> {
+impl<R: RandomSource> MaterialSurfaceQueries for SurfaceQueries<'_, '_, R>
+where
+    R::Positional: Clone + Send + Sync,
+{
     fn surface_depth(&mut self, x: i32, z: i32) -> i32 {
         self.pipeline.surface.surface_depth(x, z)
     }
