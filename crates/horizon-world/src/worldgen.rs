@@ -51,6 +51,7 @@ pub mod material_condition;
 pub mod material_extensions;
 pub mod material_stage;
 pub mod material_surface;
+pub mod noise_1_8_9;
 pub mod ore_feature;
 pub mod overrides;
 pub mod placement;
