@@ -471,27 +471,23 @@ fn book_pages(pages: &[String]) -> Tag {
     )
 }
 
-/// A text component as the JSON string 1.8 stores in `display.Name`.
+/// A text component as the plain string 1.8 stores in `display.Name`.
 ///
-/// A component that is already a JSON string is passed through; anything else
-/// is flattened to `{"text": ...}`, which is what the 1.8 client parses.
+/// 1.8's `ItemStack.getDisplayName` returns `display.Name` verbatim and the
+/// tooltip draws it as ordinary text; the JSON text-component form of the
+/// field arrived with 1.13. A bare string component is already the literal
+/// text, so it passes through; a compound or list is flattened to its plain
+/// words (`Component.getString`), losing style the way 1.8 cannot show it.
 fn display_name(name: &Tag) -> Tag {
-    if let Tag::String(s) = name {
-        let text = s.to_string_lossy();
-        if text.trim_start().starts_with('{') {
-            return name.clone();
-        }
+    match name {
+        Tag::String(_) => name.clone(),
+        other => Tag::String(
+            horizon_client_core::component::name_text(other)
+                .plain()
+                .as_str()
+                .into(),
+        ),
     }
-    let plain = match name {
-        Tag::String(s) => s.to_string_lossy(),
-        other => format!("{other:?}"),
-    };
-    Tag::String(
-        serde_json::json!({ "text": plain })
-            .to_string()
-            .as_str()
-            .into(),
-    )
 }
 
 /// `ench`/`StoredEnchantments`: `{id, lvl}` with 1.8's numeric ids.
@@ -620,12 +616,12 @@ mod tests {
         egg.data_mut().custom_name = Some(Tag::String("Bob".into()));
         let (id, count, damage, tag) = legacy(egg);
         assert_eq!((id, count, damage), (383, 1, 54));
-        // `display.Name` is a JSON text component (1.8 keeps the whole chat
-        // component), not the bare string.
+        // 1.8's `display.Name` is the plain name (the JSON component form is
+        // 1.13+), and the egg reads it back as its display name.
         let Some(Tag::String(display)) = tag.get("display").and_then(|d| d.get("Name")) else {
             panic!("no display name in {tag:?}");
         };
-        assert!(display.to_string_lossy().contains("Bob"), "{display:?}");
+        assert_eq!(display.to_string_lossy(), "Bob");
         let back = stack(383, 1, 54, &tag).expect("renamed egg");
         assert_eq!(back.custom_name().as_deref(), Some("Bob"));
         // 1.8's egg has no `EntityTag` field: the class never reads one, so a
@@ -723,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn a_custom_name_becomes_a_json_display_name() {
+    fn a_custom_name_is_written_as_plain_1_8_text() {
         let mut sword = stack(276, 1, 0, &Tag::End).expect("sword");
         sword.data_mut().custom_name = Some(Tag::String("Blade".into()));
         let (_, _, _, tag) = legacy(sword);
@@ -732,7 +728,22 @@ mod tests {
             Tag::String(s) => Some(s.to_string_lossy()),
             _ => None,
         });
-        assert_eq!(name.as_deref(), Some(r#"{"text":"Blade"}"#));
+        assert_eq!(name.as_deref(), Some("Blade"));
+        // A compound component loses its style but keeps its words.
+        let mut styled = stack(276, 1, 0, &Tag::End).expect("sword");
+        styled.data_mut().custom_name = Some(nbt([
+            ("text", Tag::String("Blade".into())),
+            ("color", Tag::String("red".into())),
+        ]));
+        let (_, _, _, tag) = legacy(styled);
+        let name = tag
+            .get("display")
+            .and_then(|d| d.get("Name"))
+            .and_then(|n| match n {
+                Tag::String(s) => Some(s.to_string_lossy()),
+                _ => None,
+            });
+        assert_eq!(name.as_deref(), Some("Blade"));
     }
 
     #[test]

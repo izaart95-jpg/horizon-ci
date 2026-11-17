@@ -430,11 +430,12 @@ impl GameLevel<'_> {
             self.pending.record_saved(at, &tag);
         }
         let dynamic = self.pending.dynamic(at);
+        let spawn = self.ui.rules.bool("block_drops");
         let drops = match self.items.block_loot_sequence(self.registry, state) {
             Some(sequence) => {
                 let random = self.rand_sequences.get(&sequence, self.seed);
                 self.items
-                    .block_drops_with(self.registry, state, None, &dynamic, random)
+                    .block_drops_with(self.registry, state, None, &dynamic, random, spawn)
             }
             None => self.items.block_drops_with(
                 self.registry,
@@ -442,11 +443,12 @@ impl GameLevel<'_> {
                 None,
                 &dynamic,
                 &mut self.world.random,
+                spawn,
             ),
         };
-        for stack in drops {
-            if &*stack.item != "minecraft:air" && stack.count > 0 {
-                self.pop_resource(at, stack);
+        for drop in drops {
+            if &*drop.item != "minecraft:air" && drop.count > 0 {
+                self.pop_popped(at, drop);
             }
         }
         self.pending.clear(at);

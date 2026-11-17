@@ -479,7 +479,25 @@ fn filterable_text(t: &Tag) -> Option<String> {
 }
 fn read_text(t: &Tag) -> Option<String> {
     match t {
-        Tag::String(s) => Some(s.to_string_lossy()),
+        Tag::String(s) => {
+            let raw = s.to_string_lossy();
+            let trimmed = raw.trim_start();
+            // `ItemCustomNameToComponentFix` turns a 1.8 plain name into a
+            // JSON component string, and a JSON-era component is stored the
+            // same way; parse it back to its words. Any other string is the
+            // literal text it looks like.
+            if (trimmed.starts_with('{') || trimmed.starts_with('['))
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
+            {
+                return Some(
+                    horizon_client_core::component::name_text(
+                        &horizon_client_core::scoreboard::json_to_tag(&json),
+                    )
+                    .plain(),
+                );
+            }
+            Some(raw)
+        }
         // A component's root `text` may be empty with the visible words in
         // `extra` (every legacy display name ViaVersion produces looks like
         // this), so flatten the whole component instead of reading one key.

@@ -1142,9 +1142,11 @@ impl Items {
             registry, state, held, dynamic, random, sequences, None, false, false,
         )
     }
-    /// `block_drops_with` for a block entity's own drops (the 26.3 ledger):
-    /// callers spawn them with `Block.popResource`, so the 1.8 position
-    /// draws happen at spawn time instead.
+    /// `Block.dropResources` for a block destroyed outside a player break (a
+    /// command's `destroy`, a broken moving piston): `spawn` is `doTileDrops`,
+    /// so a 1.8 drop carries the three `spawnAsEntity` position draws and the
+    /// caller spawns it with `pop_popped`; a 26.3 loot table keeps `pop: None`
+    /// and the caller's `Block.popResource` draws instead.
     pub fn block_drops_with(
         &self,
         registry: &BlockRegistry,
@@ -1152,11 +1154,11 @@ impl Items {
         held: Option<&ItemStack>,
         dynamic: &[ItemStack],
         random: &mut impl RandomSource,
-    ) -> Vec<ItemStack> {
-        self.block_drops_full(registry, state, held, dynamic, random, None)
-            .into_iter()
-            .map(|d| d.stack)
-            .collect()
+        spawn: bool,
+    ) -> Vec<crate::block_drops_1_8_9::Popped> {
+        self.block_drops_exploded(
+            registry, state, held, dynamic, random, None, None, false, spawn,
+        )
     }
     /// `block_drops_with` for a block a player breaks (`Block.playerDestroy`):
     /// the player is the loot context's `this` entity, so snow and chorus

@@ -52,9 +52,12 @@
 >   read the same stream vanilla does. An explosion pays ore experience from
 >   1.8's `randomDropAsItem` even when the chance fails. A broken moving piston
 >   drops the block its block entity carries, at chance 1 and fortune 0, and
->   drops nothing when the entity is gone. Debt: commands and block-entity
->   paths that roll through `block_drops_in` still draw the position at spawn
->   instead of inside the roll.
+>   drops nothing when the entity is gone. A command's `destroy` and a broken
+>   moving piston roll each stack through `Block.dropResources`, so the
+>   spawn position is drawn inside the roll and spawned with `pop_popped`.
+>   Debt: `/loot` is not a 1.8 command, so its `mine` source evaluates through
+>   `block_drops_in` (no `spawnAsEntity` draws) and `spawn` gives the stacks
+>   the post-1.8 command's own offset.
 >   A jukebox's record is not in its drop table: it pops through the block's
 >   pre-removal side effect with 1.8's own offset.
 > - **Chest loot is 1.8's lists and 1.8's fill.** The eleven chests 1.8 fills
@@ -589,6 +592,14 @@ the mob's `CustomName`. The 1.8 target does that and drops a current egg's
 `entity_data` component when encoding a slot, and its egg use skips the 26.3
 component application.
 
+Names are plain text in 1.8: `ItemStack.getDisplayName` returns `display.Name`
+verbatim (`setStackDisplayName` stores the raw string), and
+`Entity.getDisplayName` wraps `CustomName` in `ChatComponentText`; neither
+parses JSON. The `display.Name`/`CustomName` JSON-component form arrived with
+1.13, so writing 1.8 data flattens a current component to its words (keeping a
+plain string's `§` codes), and reading a datafixed name parses the JSON
+component the 1.13 fixer wrote.
+
 Potion damage is 1.8's bitmask, not a potion name: bits 0–3 select the
 effects, bit 4 is the awkward marker, bit 5 glowstone (level II), bit 6
 redstone (extended), bit 13 marks every brewed effect potion and bit 14 makes
@@ -668,9 +679,11 @@ without a level-random draw, so the 26.3 merge id and spawn merge are skipped
 under 1.8. Each stack's `Block.spawnAsEntity` position is drawn inside its own
 drop call (`nextFloat() * 0.5 + 0.25` per axis), so a multi-drop block and an
 explosion read the same stream as vanilla, and `doTileDrops` is checked before
-those draws. Debt: block-entity paths that still roll through
-`block_drops_with`/`block_drops_in` draw the position at spawn instead. A broken
-moving piston drops the block its block entity carries, as
+those draws. `Block.dropResources` — a command's `destroy` or a broken moving
+piston — evaluates through `block_drops_with` with `doTileDrops` and spawns each
+`Popped` through `pop_popped`; only `/loot`, a command 1.8 did not have, still
+reads `block_drops_in` and spawns at the command's own offset. A broken moving
+piston drops the block its block entity carries, as
 `BlockPistonMoving.dropBlockAsItemWithChance` does: the carried state's
 `dropBlockAsItem(..., 0)` at chance 1 and fortune 0, whatever chance the
 explosion passed, and nothing when the entity is gone. A jukebox's record is

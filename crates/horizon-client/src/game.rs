@@ -3893,26 +3893,24 @@ impl Game<'_> {
     /// call already made: they interleave with the next stack's chance draw,
     /// so the spawn cannot wait for a later pass.
     fn pop_popped(&mut self, pos: [i32; 3], mut popped: horizon_client::block_drops_1_8_9::Popped) {
-        self.pending.attach(pos, &mut popped.stack);
-        if !self.ui.rules.bool("block_drops") {
-            // 1.8 checked the gamerule before drawing the offsets, so a drop
-            // carrying them only exists when the rule was on.
-            return;
-        }
-        match popped.pop {
-            Some(offset) => {
-                let at = [
-                    f64::from(pos[0]) + f64::from(offset[0]),
-                    f64::from(pos[1]) + f64::from(offset[1]),
-                    f64::from(pos[2]) + f64::from(offset[2]),
-                ];
-                let v = dispenser::new_item_motion();
-                self.spawn_item(popped.stack, at, v, 10);
-            }
+        let Some(offset) = popped.pop else {
             // A 26.3 loot table or a stack a mod added after the roll: the
             // position is drawn now instead.
-            None => self.pop_resource(pos, popped.stack),
+            return self.pop_resource(pos, popped.stack);
+        };
+        // 1.8 checked the gamerule before drawing the offsets, so a drop
+        // carrying them only exists when the rule was on.
+        if !self.ui.rules.bool("block_drops") {
+            return;
         }
+        self.pending.attach(pos, &mut popped.stack);
+        let at = [
+            f64::from(pos[0]) + f64::from(offset[0]),
+            f64::from(pos[1]) + f64::from(offset[1]),
+            f64::from(pos[2]) + f64::from(offset[2]),
+        ];
+        let v = dispenser::new_item_motion();
+        self.spawn_item(popped.stack, at, v, 10);
     }
     /// Player.drop: thrown from the eyes along the view direction.
     fn drop_held(&mut self, all: bool) {

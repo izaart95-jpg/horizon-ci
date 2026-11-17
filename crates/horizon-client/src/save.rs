@@ -2131,6 +2131,32 @@ fn equipment_1_8_9(equipment: &Compound, drop_chances: Option<&Tag>) -> (Tag, Op
     (Tag::List(items), chances)
 }
 
+/// A name as 1.8 stores it: `ChatComponentText` renders the string literally
+/// (`Entity.getDisplayName` and `ItemStack.getDisplayName`), so a current
+/// component is flattened to its words. A string that holds a JSON component
+/// (a current save writes one) is parsed first; any other string is already
+/// 1.8 text and keeps its `§` codes.
+fn name_1_8_9(name: &Tag) -> Option<String> {
+    match name {
+        Tag::String(s) => {
+            let raw = s.to_string_lossy();
+            let trimmed = raw.trim_start();
+            if (trimmed.starts_with('{') || trimmed.starts_with('['))
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
+            {
+                return Some(
+                    horizon_client_core::component::name_text(&crate::scoreboard::json_to_tag(
+                        &json,
+                    ))
+                    .plain(),
+                );
+            }
+            Some(raw)
+        }
+        other => Some(horizon_client_core::component::name_text(other).plain()),
+    }
+}
+
 /// A 1.8 entity tag from the current one, or `None` when 1.8.9 has no such
 /// entity. Fields 1.8 ignores are kept; the ones whose name or type changed
 /// are converted, and item stacks go back to `id`/`Count`/`Damage`.
@@ -2170,13 +2196,13 @@ pub(crate) fn entity_1_8_9(tag: &Tag) -> Option<Tag> {
         map.insert("HealF".into(), Tag::Float(bits));
         map.insert("Health".into(), Tag::Short(short as i16));
     }
-    // 1.8 parses `CustomName` as a JSON text component.
-    if let Some(Tag::String(name)) = map.get(&JavaString::from("CustomName")).cloned() {
-        let name = name.to_string_lossy();
-        if !name.trim_start().starts_with('{') {
-            let json = serde_json::json!({ "text": name }).to_string();
-            map.insert("CustomName".into(), string(&json));
-        }
+    // `Entity.getDisplayName` wraps the string in `ChatComponentText`, which
+    // renders it literally: 1.8 has no JSON component in `CustomName`. A
+    // current component is flattened to its words.
+    if let Some(name) = map.get(&JavaString::from("CustomName")).cloned()
+        && let Some(plain) = name_1_8_9(&name)
+    {
+        map.insert("CustomName".into(), string(&plain));
     }
     // `equipment`/`drop_chances` (1.9+) become the five-slot 1.8 lists.
     let equipment = match map.get(&JavaString::from("equipment")) {
@@ -9229,10 +9255,27 @@ mod tests {
         assert_eq!(number(out.get("Health")), Some(20));
         assert_eq!(float(out.get("HealF")), Some(20.0));
         assert!(matches!(out.get("FallDistance"), Some(Tag::Float(_))));
-        assert_eq!(
-            text(out.get("CustomName")).as_deref(),
-            Some("{\"text\":\"Bob\"}")
-        );
+        // 1.8 `ChatComponentText` renders the string literally, so the name
+        // is plain text (a current JSON component is flattened).
+        assert_eq!(text(out.get("CustomName")).as_deref(), Some("Bob"));
+        for custom_name in [
+            Tag::compound([("text", string("Bob")), ("color", string("red"))]),
+            string("{\"text\":\"Bob\",\"color\":\"red\"}"),
+        ] {
+            let styled = Tag::compound([
+                ("id", string("minecraft:zombie")),
+                ("CustomName", custom_name),
+            ]);
+            let out = entity_1_8_9(&styled).expect("zombie");
+            assert_eq!(text(out.get("CustomName")).as_deref(), Some("Bob"));
+        }
+        // A plain 1.8 name keeps its formatting codes.
+        let coloured = Tag::compound([
+            ("id", string("minecraft:zombie")),
+            ("CustomName", string("§6Bob")),
+        ]);
+        let out = entity_1_8_9(&coloured).expect("zombie");
+        assert_eq!(text(out.get("CustomName")).as_deref(), Some("§6Bob"));
         let Some(Tag::List(equipment)) = out.get("Equipment") else {
             panic!("no Equipment");
         };
