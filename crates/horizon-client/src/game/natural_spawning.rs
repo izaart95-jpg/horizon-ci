@@ -1078,7 +1078,7 @@ impl<'a> Game<'a> {
             // `ServerWorld.tick`: `findChunksForSpawning(world,
             // allowMonsters, allowAnimals, worldTime % 400 == 0)`.
             let (spawn_animals, spawn_monsters) =
-                spawn_flags_1_8_9(dedicated, spawn18::SpawnLevel18::peaceful(&level));
+                Self::spawn_flags_1_8_9(dedicated, spawn18::SpawnLevel18::peaceful(&level));
             let breedable = level.game_time() % 400 == 0;
             for category in Category18::ALL {
                 if (!category.hostile() && !spawn_animals)

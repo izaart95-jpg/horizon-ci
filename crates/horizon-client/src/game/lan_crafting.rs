@@ -140,11 +140,8 @@ impl Game<'_> {
                     let mut potion = false;
                     for stack in &brewed {
                         g.trigger_brewed_potion(stack);
-                        // `SlotBrewingStandPotion.onTake`: a potion that is
-                        // not a water bottle.
-                        if &*stack.item == "minecraft:potion"
-                            && stack.potion().is_some_and(|p| p != "minecraft:water")
-                        {
+                        // `SlotBrewingStandPotion.onTake`.
+                        if super::achievements::brewed_potion_grants_achievement(stack) {
                             potion = true;
                         }
                     }

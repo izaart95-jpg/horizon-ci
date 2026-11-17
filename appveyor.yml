@@ -26,7 +26,9 @@ build_script:
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client-render --lib command_block::tests::a_loaded_command_block_name_reads_the_fixers_json -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib save::tests::a_1_8_entity_gets_the_legacy_id_uuid_and_health -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib entity_nbt::tests::a_datafixed_json_armor_stand_name_shows_its_words -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib mobs::spawn_1_8_9::tests -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::creatures::tests -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::natural_spawning::tests -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::achievements::tests -j 2'
 
 test: off

@@ -367,6 +367,30 @@ impl GameLevel<'_> {
             delay: 10,
         });
     }
+    /// `Block.spawnAsEntity` for a drop whose three position draws 1.8's drop
+    /// call already made (a command's `destroy`, a broken moving piston).
+    fn pop_popped(&mut self, pos: [i32; 3], mut popped: horizon_client::block_drops_1_8_9::Popped) {
+        let Some(offset) = popped.pop else {
+            // A 26.3 loot table's stack: `Block.popResource` draws its
+            // position, but 1.8 checks `doTileDrops` first.
+            if self.rules.block_drops {
+                self.pop_resource(pos, popped.stack);
+            }
+            return;
+        };
+        self.pending.attach(pos, &mut popped.stack);
+        let at = [
+            f64::from(pos[0]) + f64::from(offset[0]),
+            f64::from(pos[1]) + f64::from(offset[1]),
+            f64::from(pos[2]) + f64::from(offset[2]),
+        ];
+        self.spill.spawns.push(Spawn {
+            stack: popped.stack,
+            pos: at,
+            motion: None,
+            delay: 10,
+        });
+    }
     /// `Block.popResource(level, pos, new ItemStack(block))`.
     pub(super) fn pop_block_item(&mut self, pos: BlockPos, state: BlockStateId) {
         let item = self.facts.get(state).item.clone();
@@ -430,7 +454,7 @@ impl GameLevel<'_> {
             self.pending.record_saved(at, &tag);
         }
         let dynamic = self.pending.dynamic(at);
-        let spawn = self.ui.rules.bool("block_drops");
+        let spawn = self.rules.block_drops;
         let drops = match self.items.block_loot_sequence(self.registry, state) {
             Some(sequence) => {
                 let random = self.rand_sequences.get(&sequence, self.seed);

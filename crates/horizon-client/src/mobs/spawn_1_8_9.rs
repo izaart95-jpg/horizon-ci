@@ -207,10 +207,15 @@ pub fn uses_neighbor_light(f: &BlockFacts, state: BlockStateId) -> bool {
 }
 
 /// `Block.isFullCube`: an opaque normal-rendering block that emits no
-/// redstone power (the redstone block's exception is not modelled; it only
-/// lets a mob spawn inside the block, not on it).
+/// redstone power. Of the blocks that emit power only the redstone block is
+/// also an opaque normal cube, so it is the one exception.
 pub fn is_full_cube(f: &BlockFacts, state: BlockStateId) -> bool {
-    f.get(state).can_occlude
+    let state = f.get(state);
+    full_cube(state.can_occlude, &state.name)
+}
+
+fn full_cube(can_occlude: bool, name: &str) -> bool {
+    can_occlude && name != "minecraft:redstone_block"
 }
 
 /// `World.isOpaque`: an opaque normal-rendering block, or a top-half stair or
@@ -810,6 +815,15 @@ mod tests {
         for _ in 0..8 {
             assert_eq!(ours.next_int(), java.next_int());
         }
+    }
+
+    #[test]
+    fn a_redstone_block_is_not_a_full_cube() {
+        // `Block.isFullCube` excludes blocks that emit redstone power; the
+        // redstone block is the only opaque normal cube that does.
+        assert!(full_cube(true, "minecraft:stone"));
+        assert!(!full_cube(true, "minecraft:redstone_block"));
+        assert!(!full_cube(false, "minecraft:glass"));
     }
 
     #[test]

@@ -625,11 +625,13 @@ with the bitmask in the slot's `Damage` and no `Potion` NBT string; decoding
 adds the empty tag compound `ItemPotionFix` needs, and names the two values the
 fixer's `damage & 127` would read as water (8192, the sugar/ghast-tear/spider-eye
 mundane, and 16384, its splash form) so they decode as `minecraft:mundane` and
-re-encode as the same damage. Debt: `PotionSlot.onTakeItem` cannot grant the 1.8
-`potion` achievement because achievements need a 1.8 server; and a brewed bottle
-keeps its NBT through `setDamage`, which the transmute path preserves, but a
-custom name or `CustomPotionEffects` on a stack that changes item id is still
-only as good as the component round trip.
+re-encode as the same damage. Taking a bottle from a brewing stand grants the
+1.8 `potion` achievement when the potion's damage is above 0, as
+`SlotBrewingStandPotion` does: a normal non-water potion or any splash potion
+(bit 14), on the single player server thread, a LAN host or a dedicated server.
+Debt: a brewed bottle keeps its NBT through `setDamage`, which the transmute
+path preserves, but a custom name or `CustomPotionEffects` on a stack that
+changes item id is still only as good as the component round trip.
 
 Fishing rolls 1.8's own pools instead of the 26.3 loot tables: junk (11
 entries, weight 83), treasure (6 entries, weight 6) and fish (cod 60, salmon
@@ -808,9 +810,11 @@ fortress only. Debt: the 26.3 generator
 still decides which biome a column has (the 1.8 list is selected by that biome
 name), its decoration random stream is not 1.8's yet, so the draws before the
 pack (and the pack itself) cannot be seed-identical, 1.8 village
-generation is unported, `isFullCube` and `World.isOpaque` read 26.3's
-`can_occlude` with the 1.8 exceptions, and `findSpawnLocation` rescans the
-column per category instead of reusing the chunk heightmap.
+generation is unported, and `findSpawnLocation` rescans the column per category
+instead of reusing the chunk heightmap. `isFullCube` and `World.isOpaque` carry
+1.8's own exceptions over the exported occlusion flags: the redstone block is
+not a full cube (it emits redstone power), while top-half stairs and slabs,
+hoppers and the tallest snow layer are opaque.
 
 Each mob a spawner creates finalizes through 1.8's `EntityLiving.onInitialSpawn`
 (`crates/horizon-client/src/mobs/finalize_1_8_9.rs`): the superclass adds the

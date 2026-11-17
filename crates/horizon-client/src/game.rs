@@ -9874,11 +9874,8 @@ impl Game<'_> {
             }
             for stack in &brewed {
                 self.trigger_brewed_potion(stack);
-                // `SlotBrewingStandPotion.onTake`: a potion that is not a
-                // water bottle.
-                if &*stack.item == "minecraft:potion"
-                    && stack.potion().is_some_and(|p| p != "minecraft:water")
-                {
+                // `SlotBrewingStandPotion.onTake`.
+                if achievements::brewed_potion_grants_achievement(stack) {
                     self.award_achievement("potion");
                 }
             }

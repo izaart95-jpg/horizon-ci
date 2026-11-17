@@ -542,6 +542,19 @@ fn furnace_achievements(item: &str) -> Vec<&'static str> {
     keys
 }
 
+/// `SlotBrewingStandPotion.onTake`: 1.8 has one potion item (373) and grants
+/// the `potion` achievement when its damage is above 0, so a splash potion
+/// counts even as a water bottle (bit 14 is set). The current items split
+/// that one item in two; a normal potion counts when it holds a non-water
+/// potion.
+pub(super) fn brewed_potion_grants_achievement(stack: &ItemStack) -> bool {
+    match &*stack.item {
+        "minecraft:splash_potion" => true,
+        "minecraft:potion" => stack.potion().is_some_and(|p| p != "minecraft:water"),
+        _ => false,
+    }
+}
+
 /// Horizon's custom-payload channel for achievement counters on the internal
 /// protocol: the current one has no achievement registry to name them with.
 pub(super) const CHANNEL: &str = "horizon:achievements";
@@ -1719,6 +1732,23 @@ mod tests {
         );
         assert!(furnace_achievements("minecraft:cod").is_empty());
         assert!(furnace_achievements("minecraft:gold_ingot").is_empty());
+    }
+
+    /// `SlotBrewingStandPotion.onTake`: 1.8's one potion item has damage 0
+    /// only for a water bottle, so a splash potion counts even when it is
+    /// water and a normal potion counts whenever it is not water.
+    #[test]
+    fn one_eight_brewed_potions_grant_the_potion_achievement() {
+        let normal = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:swiftness");
+        let water = ItemStack::new("minecraft:potion", 1).with_potion("minecraft:water");
+        let empty = ItemStack::new("minecraft:potion", 1);
+        let splash = ItemStack::new("minecraft:splash_potion", 1).with_potion("minecraft:water");
+        let bottle = ItemStack::new("minecraft:glass_bottle", 1);
+        assert!(brewed_potion_grants_achievement(&normal));
+        assert!(!brewed_potion_grants_achievement(&water));
+        assert!(!brewed_potion_grants_achievement(&empty));
+        assert!(brewed_potion_grants_achievement(&splash));
+        assert!(!brewed_potion_grants_achievement(&bottle));
     }
 
     /// `EntityItem.playerTouch`: one achievement per picked stack.
