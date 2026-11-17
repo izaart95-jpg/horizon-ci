@@ -32,5 +32,6 @@ build_script:
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::creatures::tests -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::natural_spawning::tests -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::achievements::tests -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --bins game::remote_1_8_9::tests -j 2'
 
 test: off

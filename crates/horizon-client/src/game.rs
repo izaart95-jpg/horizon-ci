@@ -15999,7 +15999,9 @@ impl Game<'_> {
             KeyCode::KeyE
                 if self.screen == Screen::Creative && self.creative_screen.tab().search => {}
             KeyCode::KeyE => match self.screen {
-                Screen::Playing if self.spectator() => {}
+                // 1.8's `MinecraftClient` sends OPEN_INVENTORY_ACHIEVEMENT and
+                // opens the survival inventory for a spectator too; the
+                // server ignores the spectator's clicks (`onClickWindow`).
                 Screen::Playing => {
                     // key.inventory while riding a tamed mount opens its inventory.
                     if !self.open_ridden_mount_menu() {

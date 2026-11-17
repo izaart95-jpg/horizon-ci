@@ -903,9 +903,15 @@ as `EntityPlayerMP.onUpdate` does, keeps the requirement set in memory as
 are hill, plateau or shore variants the modern biome list folds into their base
 name (desert hills into the desert, ice mountains into the snowy plains, the
 mushroom shore into the mushroom fields, ...), so the achievement requires the
-26 name families a current world can show instead. Debt:
-a repeat End exit re-credits `theEnd2` instead of `portal`, and a spectator's
-`openInventory` is blocked by the client before the action is sent.
+26 name families a current world can show instead. The End exit portal calls
+`teleportToDimension(1)` while the player is still in dimension 1, and
+`ServerPlayerEntity.teleportToDimension` grants `THE_END_2` for that `(1, 1)`
+call and rolls the credits, so a repeat exit credits `theEnd2` by design; the
+collapsed End-to-Overworld event is that call. The inventory key opens the
+survival screen for a spectator too, as `MinecraftClient` does, and still
+sends `OPEN_INVENTORY_ACHIEVEMENT`; `ServerPlayNetworkHandler.onClientStatus`
+case 3 increments the counter whatever the game mode, and
+`onClickWindow` ignores the spectator's slot clicks.
 
 The enchanting table draws from 1.8's own 25-entry `enchantmentsList`, not the
 26.3 `#minecraft:in_enchanting_table` tag (which adds Mending, Frost Walker and
@@ -922,6 +928,10 @@ sees English enchantment names until `horizon-prepare` emits the mapping.
 The anvil is `AnvilScreenHandler.updateResult`: the prior-work tax is
 `input.repairCost + addition.repairCost`, renaming costs 1, a rename-only
 result caps at 39 and any result at 40 or more is refused outside creative.
+Every result raises the prior-work penalty, a rename included (`2 * base + 1`),
+and the second slot counts as a book only when it is an enchanted book with at
+least one enchantment (`getEnchantmentNbt(stack).size() > 0`), so an empty
+enchanted book neither combines nor renames through the anvil.
 The per-level enchantment fee is 1.8's switch on
 `Enchantment.getEnchantmentType()`, which the jar fills with the enchantment's
 weight: 10 costs 1, 5 costs 2, 2 costs 4 and 1 costs 8, halved with a floor of
@@ -1055,6 +1065,9 @@ Last full run in this tree (Linux, `--no-default-features` for the client):
 | `BiomeSpawnProbe18` dump | 736 rows over 61 biome names, 18 distinct lists, the four 1.8 category caps and the swamp-hut/ocean-monument monster overrides, written to `biome_spawns_1_8_9.rs` |
 | `cargo test -p horizon-client --lib resident_bubble_columns_and_nautilus_preserve_their_air_rules` | passed on both targets: 1.8 freezes air while water breathing, resets it to 300 on leaving water and drowns at −20 |
 | `prepare_1_8_9_registry` + `cargo test -p horizon-client --lib lan::prediction::tests` | bottom slab state 4741 projects the 0.0..0.5 shape (not the top slab's); 19 prediction tests pass |
+| `cargo test -p horizon-items --lib enchant_1_8_9` | 5 passed (the jar's accept/apply masks, the weight-keyed anvil fee, the generated tables) |
+| `cargo test -p horizon-client --lib stations::tests` | 11 passed (1.8 fee, combine direction and gate, repair materials, the empty-book rule, the rename penalty) |
+| 1.8.9 `MinecraftClient.handleKeybinds` bytecode | the inventory key sends `OPEN_INVENTORY` and opens the survival screen in every game mode; the remote path sends it too (internal action 3, wire action 2) |
 
 Run `horizon-client-render` serially: its GPU tests can crash when several run
 at once. The ignored tests need prepared resources.

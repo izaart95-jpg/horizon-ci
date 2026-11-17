@@ -36,6 +36,19 @@ fn velocity(v: [i16; 3]) -> [f64; 3] {
     v.map(|c| f64::from(c) / 8000.0)
 }
 
+/// `ClientStatus` as the internal protocol spells it, translated to the 1.8
+/// wire. 1.8's enum is RESPAWN 0, REQUEST_STATS 1, OPEN_INVENTORY_ACHIEVEMENT 2;
+/// the internal protocol has OPEN_INVENTORY at 3 (2 is request-game-rules) and
+/// no stats action, so a stats request has no 1.8 form.
+fn client_command_1_8_9(action: i32) -> Option<play18::ClientCommand> {
+    match action {
+        0 | 1 => Some(play18::ClientCommand { action }),
+        // `ClientStatus.OPEN_INVENTORY`: the 1.8 action 2.
+        3 => Some(play18::ClientCommand { action: 2 }),
+        _ => None,
+    }
+}
+
 /// An NBT number as an integer, whatever width the writer chose.
 fn tag_number(tag: Option<&Tag>) -> Option<i64> {
     match tag? {
@@ -1297,12 +1310,7 @@ impl Game<'_> {
             C::ChatCommandSigned(p) => P::Chat(play18::ServerChat {
                 message: chat_1_8_9(&format!("/{}", p.command)),
             }),
-            C::ClientCommand(p) => match p.action {
-                0 | 1 => P::ClientCommand(play18::ClientCommand { action: p.action }),
-                // `ClientStatus.OPEN_INVENTORY`: the 1.8 action 2.
-                3 => P::ClientCommand(play18::ClientCommand { action: 2 }),
-                _ => return None,
-            },
+            C::ClientCommand(p) => P::ClientCommand(client_command_1_8_9(p.action)?),
             C::Punch(_) => P::ArmAnimation(play18::ArmAnimation {}),
             C::Attack(p) => P::UseEntity(UseEntity::Attack { target: p.id }),
             // 26.3 always carries the hit point, relative to the entity, as
@@ -2925,5 +2933,23 @@ impl Game<'_> {
                 self.border.warning_distance = *warning_blocks
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_command_1_8_9;
+
+    /// `ServerPlayNetworkHandler.onClientStatus` switches on 1.8's own enum:
+    /// RESPAWN 0, REQUEST_STATS 1, OPEN_INVENTORY_ACHIEVEMENT 2. The internal
+    /// protocol numbers OPEN_INVENTORY 3 because 2 is request-game-rules, and
+    /// has no stats action.
+    #[test]
+    fn the_client_status_actions_keep_their_1_8_numbers() {
+        for action in 0..=1 {
+            assert_eq!(client_command_1_8_9(action).map(|p| p.action), Some(action));
+        }
+        assert_eq!(client_command_1_8_9(3).map(|p| p.action), Some(2));
+        assert!(client_command_1_8_9(2).is_none());
     }
 }

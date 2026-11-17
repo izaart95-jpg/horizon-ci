@@ -8188,7 +8188,9 @@ impl Game<'_> {
                 self.craft_size = 2;
                 self.capture(false);
                 // `Minecraft.handleKeybinds` opens the inventory in the same
-                // call that then releases an active use.
+                // call that then releases an active use, and sends
+                // ClientStatus.OPEN_INVENTORY first.
+                self.open_inventory_achievement();
                 self.release_use_for_keybind_screen();
                 Ok(true)
             }
