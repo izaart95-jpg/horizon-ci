@@ -481,6 +481,55 @@ pub fn name_text(tag: &Tag) -> Text {
     }
 }
 
+/// The JSON component the 1.13 `EntityCustomNameToComponentFix` and
+/// `ItemCustomNameToComponentFix` write into a field that used to hold plain
+/// text. `None` when the string is ordinary text (including one that merely
+/// starts with a brace but is not JSON).
+fn saved_component(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim_start();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    serde_json::from_str(raw).ok()
+}
+
+/// A saved name (`CustomName`, `display.Name`) as text.
+///
+/// A pre-1.13 save keeps a plain string there, and the 1.13 fixers rewrote the
+/// same field as a JSON component string. Parse that JSON back into its words;
+/// any other string is the literal text it looks like, `§` codes and all.
+pub fn saved_name_text(tag: &Tag) -> Text {
+    match tag {
+        Tag::String(s) => {
+            let raw = s.to_string_lossy();
+            match saved_component(&raw) {
+                Some(json) => crate::scoreboard::comp_text(&json),
+                None => Text::legacy(&raw),
+            }
+        }
+        _ => name_text(tag),
+    }
+}
+
+/// `saved_name_text` flattened to the words a 1.8 field holds.
+///
+/// A string that is not JSON is returned as written, so its `§` codes survive
+/// a write back to the legacy shape; a JSON component is flattened the way
+/// `Component.getString` would.
+pub fn saved_name_plain(tag: &Tag) -> Option<String> {
+    match tag {
+        Tag::String(s) => {
+            let raw = s.to_string_lossy();
+            Some(match saved_component(&raw) {
+                Some(json) => crate::scoreboard::comp_text(&json).plain(),
+                None => raw,
+            })
+        }
+        Tag::Compound(_) | Tag::List(_) => Some(name_text(tag).plain()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +587,35 @@ mod tests {
             to_text(&gui, &mut |_| Text::empty()).plain(),
             "[hud/heart/full@gui]"
         );
+    }
+
+    #[test]
+    fn saved_names_parse_the_json_a_legacy_fixer_wrote() {
+        let plain = Tag::String("Bob".into());
+        assert_eq!(saved_name_plain(&plain).as_deref(), Some("Bob"));
+        assert_eq!(saved_name_text(&plain).plain(), "Bob");
+        // `EntityCustomNameToComponentFix` keeps the field a string but turns
+        // it into JSON; its words are the 1.8 name.
+        let json = Tag::String(r#"{"text":"Bob","color":"red"}"#.into());
+        assert_eq!(saved_name_plain(&json).as_deref(), Some("Bob"));
+        assert_eq!(saved_name_text(&json).plain(), "Bob");
+        // A 1.8 name that itself looked like JSON was escaped by the fixer,
+        // so one parse gives the literal text back.
+        let escaped = Tag::String(r#"{"text":"{\"text\":\"x\"}"}"#.into());
+        assert_eq!(
+            saved_name_plain(&escaped).as_deref(),
+            Some(r#"{"text":"x"}"#)
+        );
+        // A 1.8 string keeps its formatting codes when written back, while
+        // the rendered text reads them as styles.
+        let coloured = Tag::String("§6Bob".into());
+        assert_eq!(saved_name_plain(&coloured).as_deref(), Some("§6Bob"));
+        assert_eq!(saved_name_text(&coloured).plain(), "Bob");
+        // A brace that is not JSON is ordinary text.
+        let not_json = Tag::String("{not json".into());
+        assert_eq!(saved_name_plain(&not_json).as_deref(), Some("{not json"));
+        let compound = Tag::compound([("text", Tag::String("Bob".into()))]);
+        assert_eq!(saved_name_plain(&compound).as_deref(), Some("Bob"));
     }
 
     #[test]

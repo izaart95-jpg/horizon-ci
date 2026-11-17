@@ -459,6 +459,10 @@ struct Options {
     /// `--dedicated`: run as a dedicated server; vanilla's server arguments
     /// (`--nogui`, `--port`, `--world`, `--universe`, `--initSettings`) follow.
     dedicated: Option<Vec<String>>,
+    /// A dedicated server's `spawn-animals`/`spawn-monsters` properties.
+    /// `true` for an integrated server, which uses the difficulty instead.
+    spawn_animals: bool,
+    spawn_monsters: bool,
     /// `--benchmark SCENARIO`: run the benchmark, write its report and quit.
     benchmark: Option<String>,
     /// `--dev-mod PATH` (repeatable): mods always on and reloaded when rebuilt.
@@ -614,6 +618,8 @@ impl Options {
                 .ok()
                 .filter(|n| !n.is_empty()),
             dedicated: None,
+            spawn_animals: true,
+            spawn_monsters: true,
             benchmark: None,
             dev_mods: Vec::new(),
             server_thread: std::env::var("HORIZON_SERVER_THREAD").map_or(true, |v| {

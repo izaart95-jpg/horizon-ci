@@ -1196,7 +1196,7 @@ pub fn lore_texts(stack: &ItemStack) -> Vec<crate::text::Text> {
 /// A custom name inherits italic from `ItemStack.getStyledHoverName`.
 pub fn styled_name(stack: &ItemStack, fallback: impl FnOnce() -> String) -> crate::text::Text {
     if let Some(component) = stack.data().and_then(|d| d.custom_name.as_ref()) {
-        return crate::entity_nbt::name_text(component).with_style(&crate::text::Style {
+        return crate::entity_nbt::saved_name_text(component).with_style(&crate::text::Style {
             italic: Some(true),
             ..Default::default()
         });

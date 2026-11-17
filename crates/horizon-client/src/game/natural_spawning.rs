@@ -1043,6 +1043,14 @@ impl<'a> Game<'a> {
         candidates.retain(|&(cx, cz)| self.world.chunks.contains_key(&(cx, cz)));
         counted
     }
+    /// `MinecraftServer.a(EnumDifficulty)` for the 1.8 natural spawner:
+    /// `ServerWorld.allowAnimals`/`allowMonsters`. An integrated server
+    /// follows the difficulty (animals at every difficulty, monsters above
+    /// peaceful); a dedicated server takes `spawn-animals`/`spawn-monsters`
+    /// whatever the difficulty.
+    fn spawn_flags_1_8_9(dedicated: Option<(bool, bool)>, peaceful: bool) -> (bool, bool) {
+        dedicated.unwrap_or((true, !peaceful))
+    }
     /// `MobSpawnerHelper.tickSpawners` against the 1.8 rules: the category
     /// caps over the loaded mobs, then one chunk at a time.
     pub(super) fn spawn_natural_1_8_9(&mut self) {
@@ -1061,14 +1069,22 @@ impl<'a> Game<'a> {
         let mut rides = Vec::new();
         let mut counts = [0i32; 8];
         {
+            let dedicated = self
+                .options
+                .dedicated
+                .is_some()
+                .then_some((self.options.spawn_animals, self.options.spawn_monsters));
             let level = self.natural_level();
-            // Single-player `ServerWorld.tick`: `spawnAnimals` is
-            // difficulty != PEACEFUL, `spawnMonsters` is always true, and
-            // the breedable gate is `world time % 400 == 0`.
-            let spawn_animals = !spawn18::SpawnLevel18::peaceful(&level);
+            // `ServerWorld.tick`: `findChunksForSpawning(world,
+            // allowMonsters, allowAnimals, worldTime % 400 == 0)`.
+            let (spawn_animals, spawn_monsters) =
+                spawn_flags_1_8_9(dedicated, spawn18::SpawnLevel18::peaceful(&level));
             let breedable = level.game_time() % 400 == 0;
             for category in Category18::ALL {
-                if (!category.hostile() && !spawn_animals) || (category.breedable() && !breedable) {
+                if (!category.hostile() && !spawn_animals)
+                    || (category.hostile() && !spawn_monsters)
+                    || (category.breedable() && !breedable)
+                {
                     continue;
                 }
                 let n = level.persistent_count(category);
@@ -1349,5 +1365,33 @@ impl<'a> Game<'a> {
                 self.apply_ride(rider, ride, vehicle);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_player_spawn_gates_follow_the_difficulty() {
+        // `MinecraftServer.a(EnumDifficulty)`: `a(difficulty != PEACEFUL,
+        // true)`, so animals spawn at every difficulty and monsters only
+        // above peaceful.
+        assert_eq!(Game::spawn_flags_1_8_9(None, true), (true, false));
+        assert_eq!(Game::spawn_flags_1_8_9(None, false), (true, true));
+    }
+
+    #[test]
+    fn dedicated_spawn_gates_ignore_the_difficulty() {
+        // `DedicatedServer.init`: the world's allowed spawn types come from
+        // `spawn-animals`/`spawn-monsters`, whatever the difficulty is.
+        assert_eq!(
+            Game::spawn_flags_1_8_9(Some((false, true)), true),
+            (false, true)
+        );
+        assert_eq!(
+            Game::spawn_flags_1_8_9(Some((true, false)), false),
+            (true, false)
+        );
     }
 }

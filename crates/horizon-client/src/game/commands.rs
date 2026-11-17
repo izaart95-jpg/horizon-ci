@@ -584,9 +584,7 @@ impl Game<'_> {
                     _ => None,
                 };
                 if let Some(c) = custom {
-                    return horizon_client::scoreboard::comp_text(
-                        &horizon_client::scoreboard::tag_to_json(c),
-                    );
+                    return horizon_client::component::saved_name_text(c);
                 }
                 let ty = self.target_type(other);
                 Text::translate(&format!("entity.{}", ty.replace(':', ".")), &[])
@@ -1154,7 +1152,7 @@ impl Game<'_> {
         let empty = item == "minecraft:air" || s.count == 0;
         let custom = s.data().and_then(|data| data.custom_name.as_ref());
         let hover = if let Some(c) = custom {
-            horizon_client::component::name_text(c)
+            horizon_client::component::saved_name_text(c)
         } else if let Some(name) = s.data().and_then(|d| d.other("minecraft:item_name")) {
             // `ItemStack.getItemName`: the `item_name` component wins over the
             // item's own name (`Item.getName`), so a datapack's or a server's

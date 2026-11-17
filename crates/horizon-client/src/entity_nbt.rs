@@ -1329,16 +1329,10 @@ pub fn put_brain(map: &mut Compound, m: &Mob, dimension: &str) {
 }
 /// `CustomName`: a text component saved as a string or a `{text: ..}` compound.
 fn custom_name(tag: &Tag) -> Option<String> {
-    match tag.get("CustomName")? {
-        Tag::String(s) => Some(s.to_string_lossy()),
-        t @ Tag::Compound(_) => match t.get("text") {
-            Some(Tag::String(s)) => Some(s.to_string_lossy()),
-            _ => None,
-        },
-        _ => None,
-    }
+    let name = horizon_client_core::component::saved_name_plain(tag.get("CustomName")?)?;
+    (!name.is_empty()).then_some(name)
 }
-pub use horizon_client_core::component::name_text;
+pub use horizon_client_core::component::{name_text, saved_name_text};
 /// Mob.finalizeSpawn's follow range bonus in the saved attributes.
 pub(crate) fn spawn_bonus(tag: &Tag) -> Option<f64> {
     let Some(Tag::List(attrs)) = tag.get("attributes") else {
@@ -1483,7 +1477,7 @@ pub fn mob_from_nbt(
     }
     m.extra.pick_up_loot = flag(tag, "CanPickUpLoot");
     m.custom_name = custom_name(tag);
-    m.custom_name_text = tag.get("CustomName").map(name_text);
+    m.custom_name_text = tag.get("CustomName").map(saved_name_text);
     m.extra.left_handed = flag(tag, "LeftHanded");
     if let Some(Tag::Compound(c)) = tag.get("drop_chances") {
         let mut chances = [crate::mobs::drops::DEFAULT_DROP_CHANCE; 8];
@@ -2716,7 +2710,7 @@ pub fn armor_stand_from_nbt(tag: &Tag, id: u32) -> Option<ArmorStand> {
     a.velocity = motion(tag);
     a.health = float(tag.get("Health")).unwrap_or(20.0) as f32;
     a.fire_ticks = number(tag.get("Fire")).unwrap_or(0) as i32;
-    a.custom_name = tag.get("CustomName").map(name_text);
+    a.custom_name = tag.get("CustomName").map(saved_name_text);
     a.name_visible = flag(tag, "CustomNameVisible");
     if let Some(eq) = tag.get("equipment") {
         for (i, slot) in ArmorStand::SLOTS.iter().enumerate() {
@@ -3010,6 +3004,28 @@ mod tests {
         );
         assert_eq!((pos, after), (at, 97));
         assert!(ominous_item_spawner_from_nbt(&raw).is_none());
+    }
+
+    #[test]
+    fn a_datafixed_json_armor_stand_name_shows_its_words() {
+        // A 1.8 save's `CustomName` goes through
+        // `EntityCustomNameToComponentFix`, which leaves a JSON string in the
+        // field; the stand shows the words, not the JSON.
+        let tag = Tag::compound([
+            (
+                "Pos",
+                Tag::List(vec![
+                    Tag::Double(0.0f64.to_bits()),
+                    Tag::Double(64.0f64.to_bits()),
+                    Tag::Double(0.0f64.to_bits()),
+                ]),
+            ),
+            ("CustomName", string(r#"{"text":"Bob","color":"red"}"#)),
+        ]);
+        let a = armor_stand_from_nbt(&tag, 7).unwrap();
+        let name = a.custom_name.as_ref().unwrap();
+        assert_eq!(name.plain(), "Bob");
+        assert!(name.spans[0].style.color.is_some());
     }
 
     #[test]

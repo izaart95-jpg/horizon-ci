@@ -91,9 +91,9 @@
 >   Debt: which biome a column has still comes from the 26.3 generator, a
 >   chunk's decoration random stream is still 26.3's (so the packs the
 >   generator places afterwards cannot be seed-identical yet), and 1.8
->   village generation is unported; the dedicated
->   server's `spawn-animals`/`spawn-monsters` settings are not modelled (single
->   player uses difficulty for animals and always allows monsters).
+>   village generation is unported; a dedicated server honours its
+>   `spawn-animals`/`spawn-monsters` properties, while single player follows
+>   the difficulty (monsters above peaceful, animals always).
 - **Some 1.8 screens are still 26.3 layouts.** The title screen, options,
 >   create-world, the in-game HUD, the pause menu and its "Open to LAN" screen
 >   use 1.8 layouts. 1.8 has no world-options screen, so the pause menu does
@@ -598,7 +598,9 @@ verbatim (`setStackDisplayName` stores the raw string), and
 parses JSON. The `display.Name`/`CustomName` JSON-component form arrived with
 1.13, so writing 1.8 data flattens a current component to its words (keeping a
 plain string's `§` codes), and reading a datafixed name parses the JSON
-component the 1.13 fixer wrote.
+component the 1.13 fixer wrote: `component::saved_name_text` for nametags,
+holograms, container titles, command block names and tooltips, and
+`saved_name_plain` for the field a 1.8 save writes back.
 
 Potion damage is 1.8's bitmask, not a potion name: bits 0–3 select the
 effects, bit 4 is the awkward marker, bit 5 glowstone (level II), bit 6
@@ -779,8 +781,10 @@ neighbour light), and the heightmap and `recievesSunlight` use the exported
 1.8 opacity. Ambient darkness is `World.method_3597(1.0)` with 1.8's
 `MathHelper` sine table and the real rain/thunder gradients; `isThundering`
 reads the gradient above 0.9. Single player passes
-`spawnAnimals = difficulty != PEACEFUL` and `spawnMonsters = true`, and the
-breedable gate is `world time % 400 == 0`; `doMobSpawning` and a debug
+`spawnMonsters = difficulty != PEACEFUL` and `spawnAnimals = true`; a
+dedicated server passes its `spawn-monsters`/`spawn-animals` properties,
+whatever the difficulty is (MinecraftServer.setDifficulty). The breedable gate
+is `world time % 400 == 0`; `doMobSpawning` and a debug
 generator skip the pass. The fresh-chunk packs are 1.8's too:
 `SurfaceChunkGenerator.decorateChunk` seeds the provider random with the chunk
 coordinates and 1.8's `nextLong() / 2 * 2 + 1` (truncating, unlike 26.3's
@@ -804,8 +808,7 @@ fortress only. Debt: the 26.3 generator
 still decides which biome a column has (the 1.8 list is selected by that biome
 name), its decoration random stream is not 1.8's yet, so the draws before the
 pack (and the pack itself) cannot be seed-identical, 1.8 village
-generation is unported, a dedicated server's `spawn-animals`/`spawn-monsters`
-settings are not modelled, `isFullCube` and `World.isOpaque` read 26.3's
+generation is unported, `isFullCube` and `World.isOpaque` read 26.3's
 `can_occlude` with the 1.8 exceptions, and `findSpawnLocation` rescans the
 column per category instead of reusing the chunk heightmap.
 

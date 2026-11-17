@@ -801,6 +801,17 @@ impl Game<'_> {
         if self.ui.difficulty == 0 {
             self.mobs.retain(|m| !m.hostile());
         }
+        // `DedicatedServer.init`: `spawn-animals`/`spawn-monsters` become the
+        // world's allowed spawn types. Unlike single player, they do not
+        // depend on the difficulty (MinecraftServer.setDifficulty).
+        self.options.spawn_animals = props
+            .raw
+            .get("spawn-animals")
+            .map_or(true, |v| v.trim().eq_ignore_ascii_case("true"));
+        self.options.spawn_monsters = props
+            .raw
+            .get("spawn-monsters")
+            .map_or(true, |v| v.trim().eq_ignore_ascii_case("true"));
         // DedicatedServer.initServer: a legacy `announce-player-achievements`
         // sets the show_advancement_messages rule once, as the file is read.
         if let Some(announce) = props.announce_player_achievements {

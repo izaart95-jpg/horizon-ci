@@ -2131,32 +2131,6 @@ fn equipment_1_8_9(equipment: &Compound, drop_chances: Option<&Tag>) -> (Tag, Op
     (Tag::List(items), chances)
 }
 
-/// A name as 1.8 stores it: `ChatComponentText` renders the string literally
-/// (`Entity.getDisplayName` and `ItemStack.getDisplayName`), so a current
-/// component is flattened to its words. A string that holds a JSON component
-/// (a current save writes one) is parsed first; any other string is already
-/// 1.8 text and keeps its `§` codes.
-fn name_1_8_9(name: &Tag) -> Option<String> {
-    match name {
-        Tag::String(s) => {
-            let raw = s.to_string_lossy();
-            let trimmed = raw.trim_start();
-            if (trimmed.starts_with('{') || trimmed.starts_with('['))
-                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
-            {
-                return Some(
-                    horizon_client_core::component::name_text(&crate::scoreboard::json_to_tag(
-                        &json,
-                    ))
-                    .plain(),
-                );
-            }
-            Some(raw)
-        }
-        other => Some(horizon_client_core::component::name_text(other).plain()),
-    }
-}
-
 /// A 1.8 entity tag from the current one, or `None` when 1.8.9 has no such
 /// entity. Fields 1.8 ignores are kept; the ones whose name or type changed
 /// are converted, and item stacks go back to `id`/`Count`/`Damage`.
@@ -2200,7 +2174,7 @@ pub(crate) fn entity_1_8_9(tag: &Tag) -> Option<Tag> {
     // renders it literally: 1.8 has no JSON component in `CustomName`. A
     // current component is flattened to its words.
     if let Some(name) = map.get(&JavaString::from("CustomName")).cloned()
-        && let Some(plain) = name_1_8_9(&name)
+        && let Some(plain) = horizon_client_core::component::saved_name_plain(&name)
     {
         map.insert("CustomName".into(), string(&plain));
     }
@@ -2859,7 +2833,10 @@ fn decode_column(
             }
             match decode_block_entity(e) {
                 Some(mut be) => {
-                    if let Some(name) = text(e.get("CustomName")) {
+                    if let Some(name) = e
+                        .get("CustomName")
+                        .and_then(horizon_client_core::component::saved_name_plain)
+                    {
                         chunk.block_names.push((be.0, name));
                     }
                     if let Some(rolled) = roll_loaded_loot(&chunk, biomes, e, &mut be) {
@@ -9266,16 +9243,19 @@ mod tests {
                 ("id", string("minecraft:zombie")),
                 ("CustomName", custom_name),
             ]);
-            let out = entity_1_8_9(&styled).expect("zombie");
-            assert_eq!(text(out.get("CustomName")).as_deref(), Some("Bob"));
+            let styled_out = entity_1_8_9(&styled).expect("zombie");
+            assert_eq!(text(styled_out.get("CustomName")).as_deref(), Some("Bob"));
         }
         // A plain 1.8 name keeps its formatting codes.
         let coloured = Tag::compound([
             ("id", string("minecraft:zombie")),
             ("CustomName", string("§6Bob")),
         ]);
-        let out = entity_1_8_9(&coloured).expect("zombie");
-        assert_eq!(text(out.get("CustomName")).as_deref(), Some("§6Bob"));
+        let coloured_out = entity_1_8_9(&coloured).expect("zombie");
+        assert_eq!(
+            text(coloured_out.get("CustomName")).as_deref(),
+            Some("§6Bob")
+        );
         let Some(Tag::List(equipment)) = out.get("Equipment") else {
             panic!("no Equipment");
         };

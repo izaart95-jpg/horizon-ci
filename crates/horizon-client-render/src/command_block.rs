@@ -165,7 +165,7 @@ impl CommandBlock {
     pub fn name(&self) -> Text {
         self.custom_name.as_ref().map_or_else(
             || Text::literal("@"),
-            |t| scoreboard::comp_text(&scoreboard::tag_to_json(t)),
+            horizon_client_core::component::saved_name_text,
         )
     }
 }
@@ -198,6 +198,16 @@ pub fn power_schedules(mode: Mode, was_powered: bool, powered: bool, auto: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loaded_command_block_name_reads_the_fixers_json() {
+        let block = CommandBlock::load(&Tag::compound([(
+            "CustomName",
+            Tag::String(r#"{"text":"Boss","color":"red"}"#.into()),
+        )]));
+        assert_eq!(block.name().plain(), "Boss");
+        assert_eq!(CommandBlock::default().name().plain(), "@");
+    }
 
     #[test]
     fn modes_cycle_and_map_to_blocks() {

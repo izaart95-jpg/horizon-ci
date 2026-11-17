@@ -263,7 +263,10 @@ impl Game<'_> {
         }
         // Banners and signs keep their name themselves.
         if !matches!(entity, BlockEntity::Banner(_) | BlockEntity::Sign(_)) {
-            match save::text(placed.get("CustomName")) {
+            match placed
+                .get("CustomName")
+                .and_then(horizon_client_core::component::saved_name_plain)
+            {
                 Some(name) => self.world.block_names.insert(key, name),
                 None => self.world.block_names.remove(&key),
             };
