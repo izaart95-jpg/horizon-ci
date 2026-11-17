@@ -592,8 +592,10 @@ mod tests {
             de.get("item.minecraft.pig_spawn_egg"),
             Some("Spawn Schwein")
         );
+        // The locale carries the stone name under its 1.8 key, so it wins too.
+        assert_eq!(de.get("block.minecraft.stone"), Some("Stein"));
         // Not in the locale: the 1.8 English table answers.
-        assert_eq!(de.get("block.minecraft.stone"), Some("Stone"));
+        assert_eq!(de.get("block.minecraft.sand"), Some("Sand"));
     }
 
     #[test]
