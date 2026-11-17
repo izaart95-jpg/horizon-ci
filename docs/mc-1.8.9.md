@@ -999,14 +999,24 @@ Terrain, caves, features and structures still come from the 26.3 generator (see
 the debt below); its surface rules and placed features now run over the 1.8
 biome layout.
 
-The first terrain piece is in place: `worldgen/noise_1_8_9.rs` ports the seven
-noise generators `SurfaceChunkGenerator` constructs from one `Random(seed)`, in
-the same order (each draws its permutation from that one stream), with
-`NoiseGenerator.method_122`/`method_121` lattice sampling and
+The first terrain pieces are in place. `worldgen/noise_1_8_9.rs` ports the
+seven noise generators `SurfaceChunkGenerator` constructs from one
+`Random(seed)`, in the same order (each draws its permutation from that one
+stream), with `NoiseGenerator.method_122`/`method_121` lattice sampling and
 `PerlinNoiseGenerator.method_6580`'s octave grid. A 20-case fixture generated
 from the 1.8.9 jar (`tests/fixtures/terrain_noise_1_8_9.txt`) pins the octave,
-depth, scale and surface values by `Double.doubleToLongBits`, so the primitive
-is bit-exact; the generator does not read it yet.
+depth, scale and surface values by `Double.doubleToLongBits`. On top of it,
+`biome_terrain_1_8_9.rs` holds the 61 registered biomes' `depth`,
+`variationModifier`, temperature, rainfall, `topBlock`/`baseBlock` and surface
+override, pinned by `tests/fixtures/biome_params_1_8_9.txt`, and
+`worldgen/terrain_1_8_9.rs` ports `method_6544` (the 5x5 biome blend and the
+825-double density lattice) and `method_9194` (the trilinear interpolation to
+stone/water/air). `tests/fixtures/terrain_density_1_8_9.txt` pins all 825
+doubles and all 256 columns of four chunks (default at two seeds, amplified,
+large biomes), so the density fill is bit-exact. The generator does not read
+these modules yet: the surface pass (`method_6546` and the biome overrides),
+carvers, features and structures are still open, which is why the 26.3
+generator still grows the world.
 
 Port the 1.8 terrain generator, caves, features and structures. For a
 server-first cut this can come after stages 1–5; single-player is not playable
@@ -1033,9 +1043,10 @@ Known 1.8 debt, in the order it should be paid:
 
 - World generation still runs the 26.3 noise terrain with 1.8 block tables
   projected onto it (stage 6). 1.8 biome selection is wired in
-  (`LayerBiomeSource18`) and the terrain noise primitives are ported bit-exactly
-  (`noise_1_8_9.rs`), but `SurfaceChunkGenerator`'s density fill, per-biome
-  `genTerrainBlocks`, caves, features and structures are not yet 1.8
+  (`LayerBiomeSource18`), and the terrain noise primitives, the biome terrain
+  table and the density fill/interpolation are ported bit-exactly
+  (`noise_1_8_9.rs`, `biome_terrain_1_8_9.rs`, `worldgen/terrain_1_8_9.rs`),
+  but the surface pass, caves, features and structures are not yet 1.8
   algorithms, so seed-for-seed parity with a 1.8.9 server is not there.
 - A chunk stores one biome per 4x4x4 quart, so the saved 1.8 `Biomes` array is
   the Voronoi layer sampled every four blocks rather than its exact 16x16

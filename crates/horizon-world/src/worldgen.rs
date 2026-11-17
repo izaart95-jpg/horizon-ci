@@ -72,6 +72,7 @@ pub mod state_provider;
 pub mod structure;
 pub mod tags;
 pub mod terrain;
+pub mod terrain_1_8_9;
 pub mod tree;
 pub(crate) mod tree_blocks;
 pub mod underwater_magma;

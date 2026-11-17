@@ -10,6 +10,7 @@ pub mod attributes;
 pub mod biome_1_8_9;
 pub mod biome_layer_1_8_9;
 pub mod biome_spawns_1_8_9;
+pub mod biome_terrain_1_8_9;
 pub mod block_collision;
 pub mod block_collision_scan;
 pub mod block_entities;
