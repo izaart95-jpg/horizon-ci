@@ -1298,6 +1298,7 @@ where
         let mut pipeline = Self {
             zoom: BiomeZoom::new(obfuscate_seed(seed)),
             one_eight,
+            one_eight_amplified,
             data,
             seed,
             settings,
