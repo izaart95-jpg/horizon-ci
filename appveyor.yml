@@ -25,6 +25,7 @@ build_script:
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-world --lib worldgen::noise_1_8_9 -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-world --lib biome_terrain_1_8_9 -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-world --lib worldgen::terrain_1_8_9 -j 2'
+  - 'source "$HOME/.cargo/env" && cargo test -p horizon-world --lib worldgen::surface_1_8_9 -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client --lib stations::tests -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-items --lib custom_name -j 2'
   - 'source "$HOME/.cargo/env" && cargo test -p horizon-client-core --lib potions_1_8_9 -j 2'

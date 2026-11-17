@@ -1013,10 +1013,19 @@ override, pinned by `tests/fixtures/biome_params_1_8_9.txt`, and
 825-double density lattice) and `method_9194` (the trilinear interpolation to
 stone/water/air). `tests/fixtures/terrain_density_1_8_9.txt` pins all 825
 doubles and all 256 columns of four chunks (default at two seeds, amplified,
-large biomes), so the density fill is bit-exact. The generator does not read
-these modules yet: the surface pass (`method_6546` and the biome overrides),
-carvers, features and structures are still open, which is why the 26.3
-generator still grows the world.
+large biomes), so the density fill is bit-exact. `worldgen/surface_1_8_9.rs`
+then ports `method_6546` (the 16x16 surface-noise grid at a one-block step and
+the transposed column loop 1.8.9 uses) and every `method_6420` body: the plain
+`method_8590` column, extreme hills' gravel/stone tops, taiga podzol and
+coarse dirt, shattered savanna, the swamp water table and lily pads, and the
+mesa layer palette with its plateau noise (including the `Random(0)` bug the
+first mesa world triggers). `tests/fixtures/surface_1_8_9.txt` pins nine
+chunks — mesa, extreme hills, mega taiga, swamp, snowy and beach among them —
+by their biome ids, the 10x10 density neighbourhood, all 256 surface-noise
+doubles and every column's block-state runs. Terrain and its biome surface
+are therefore bit-exact 1.8.9. The generator does not read these modules yet:
+carvers, features, structures and the chunk wiring are still open, which is
+why the 26.3 generator still grows the world.
 
 Port the 1.8 terrain generator, caves, features and structures. For a
 server-first cut this can come after stages 1–5; single-player is not playable
@@ -1044,10 +1053,12 @@ Known 1.8 debt, in the order it should be paid:
 - World generation still runs the 26.3 noise terrain with 1.8 block tables
   projected onto it (stage 6). 1.8 biome selection is wired in
   (`LayerBiomeSource18`), and the terrain noise primitives, the biome terrain
-  table and the density fill/interpolation are ported bit-exactly
-  (`noise_1_8_9.rs`, `biome_terrain_1_8_9.rs`, `worldgen/terrain_1_8_9.rs`),
-  but the surface pass, caves, features and structures are not yet 1.8
-  algorithms, so seed-for-seed parity with a 1.8.9 server is not there.
+  table, the density fill/interpolation and the biome surface pass are ported
+  bit-exactly (`noise_1_8_9.rs`, `biome_terrain_1_8_9.rs`,
+  `worldgen/terrain_1_8_9.rs`, `worldgen/surface_1_8_9.rs`), but caves,
+  features and structures are not yet 1.8 algorithms, and no chunk path calls
+  the 1.8 terrain yet, so seed-for-seed parity with a 1.8.9 server is not
+  there.
 - A chunk stores one biome per 4x4x4 quart, so the saved 1.8 `Biomes` array is
   the Voronoi layer sampled every four blocks rather than its exact 16x16
   values.

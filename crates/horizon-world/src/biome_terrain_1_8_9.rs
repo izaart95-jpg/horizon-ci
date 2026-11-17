@@ -67,6 +67,12 @@ pub struct BiomeTerrain18 {
     pub filler: LegacyBlock18,
     /// Which `method_6420` body this biome runs.
     pub surface: Surface18,
+    /// The class's own variant field: `ExtremeHillsBiome.field_7233`
+    /// (0 hills, 1 hills+, 2 mutated), `TaigaBiome.field_7259` (0 normal,
+    /// 1 mega, 2 mega spruce), or `MesaBiome`'s two flags packed as bit 0
+    /// `field_7249` (plateau height pass) and bit 1 `field_7250` (bryce top).
+    /// Zero for every other biome.
+    pub variant: u8,
 }
 
 const fn row(
@@ -78,6 +84,7 @@ const fn row(
     top: LegacyBlock18,
     filler: LegacyBlock18,
     surface: Surface18,
+    variant: u8,
 ) -> (u8, BiomeTerrain18) {
     (
         id,
@@ -89,6 +96,7 @@ const fn row(
             top,
             filler,
             surface,
+            variant,
         },
     )
 }
@@ -97,617 +105,69 @@ use Surface18::{ExtremeHills, Mesa, Mutated, Ocean, Plain, ShatteredSavanna, Swa
 
 /// `(BiomeGenBase id, terrain)`, ascending by id: the 40 base biomes and the
 /// 21 mutated variants (`base + 128`) that 1.8.9 registers.
+#[rustfmt::skip]
 const TERRAIN: &[(u8, BiomeTerrain18)] = &[
-    row(
-        0,
-        0xbf800000,
-        0x3dcccccd,
-        0x3f000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Ocean,
-    ), // ocean
-    row(
-        1,
-        0x3e000000,
-        0x3d4ccccd,
-        0x3f4ccccd,
-        0x3ecccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // plains
-    row(
-        2,
-        0x3e000000,
-        0x3d4ccccd,
-        0x40000000,
-        0x00000000,
-        (12, 0),
-        (12, 0),
-        Plain,
-    ), // desert
-    row(
-        3,
-        0x3f800000,
-        0x3f000000,
-        0x3e4ccccd,
-        0x3e99999a,
-        (2, 0),
-        (3, 0),
-        ExtremeHills,
-    ), // windswept_hills
-    row(
-        4,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f333333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // forest
-    row(
-        5,
-        0x3e4ccccd,
-        0x3e4ccccd,
-        0x3e800000,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // taiga
-    row(
-        6,
-        0xbe4ccccd,
-        0x3dcccccd,
-        0x3f4ccccd,
-        0x3f666666,
-        (2, 0),
-        (3, 0),
-        Swamp,
-    ), // swamp
-    row(
-        7,
-        0xbf000000,
-        0x00000000,
-        0x3f000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // river
-    row(
-        8,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x40000000,
-        0x00000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // nether_wastes
-    row(
-        9,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f000000,
-        0x3f000000,
-        (3, 0),
-        (3, 0),
-        Plain,
-    ), // the_end
-    row(
-        10,
-        0xbf800000,
-        0x3dcccccd,
-        0x00000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Ocean,
-    ), // frozen_ocean
-    row(
-        11,
-        0xbf000000,
-        0x00000000,
-        0x00000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // frozen_river
-    row(
-        12,
-        0x3e000000,
-        0x3d4ccccd,
-        0x00000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // snowy_plains
-    row(
-        13,
-        0x3ee66666,
-        0x3e99999a,
-        0x00000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // snowy_plains
-    row(
-        14,
-        0x3e4ccccd,
-        0x3e99999a,
-        0x3f666666,
-        0x3f800000,
-        (110, 0),
-        (3, 0),
-        Plain,
-    ), // mushroom_fields
-    row(
-        15,
-        0x00000000,
-        0x3ccccccd,
-        0x3f666666,
-        0x3f800000,
-        (110, 0),
-        (3, 0),
-        Plain,
-    ), // mushroom_fields
-    row(
-        16,
-        0x00000000,
-        0x3ccccccd,
-        0x3f4ccccd,
-        0x3ecccccd,
-        (12, 0),
-        (12, 0),
-        Plain,
-    ), // beach
-    row(
-        17,
-        0x3ee66666,
-        0x3e99999a,
-        0x40000000,
-        0x00000000,
-        (12, 0),
-        (12, 0),
-        Plain,
-    ), // desert
-    row(
-        18,
-        0x3ee66666,
-        0x3e99999a,
-        0x3f333333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // forest
-    row(
-        19,
-        0x3ee66666,
-        0x3e99999a,
-        0x3e800000,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // taiga
-    row(
-        20,
-        0x3f4ccccd,
-        0x3e99999a,
-        0x3e4ccccd,
-        0x3e99999a,
-        (2, 0),
-        (3, 0),
-        ExtremeHills,
-    ), // windswept_hills
-    row(
-        21,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f733333,
-        0x3f666666,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // jungle
-    row(
-        22,
-        0x3ee66666,
-        0x3e99999a,
-        0x3f733333,
-        0x3f666666,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // jungle
-    row(
-        23,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f733333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // sparse_jungle
-    row(
-        24,
-        0xbfe66666,
-        0x3dcccccd,
-        0x3f000000,
-        0x3f000000,
-        (2, 0),
-        (3, 0),
-        Ocean,
-    ), // deep_ocean
-    row(
-        25,
-        0x3dcccccd,
-        0x3f4ccccd,
-        0x3e4ccccd,
-        0x3e99999a,
-        (1, 0),
-        (1, 0),
-        Plain,
-    ), // stony_shore
-    row(
-        26,
-        0x00000000,
-        0x3ccccccd,
-        0x3d4ccccd,
-        0x3e99999a,
-        (12, 0),
-        (12, 0),
-        Plain,
-    ), // snowy_beach
-    row(
-        27,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f19999a,
-        0x3f19999a,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // birch_forest
-    row(
-        28,
-        0x3ee66666,
-        0x3e99999a,
-        0x3f19999a,
-        0x3f19999a,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // birch_forest
-    row(
-        29,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x3f333333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // dark_forest
-    row(
-        30,
-        0x3e4ccccd,
-        0x3e4ccccd,
-        0xbf000000,
-        0x3ecccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // snowy_taiga
-    row(
-        31,
-        0x3ee66666,
-        0x3e99999a,
-        0xbf000000,
-        0x3ecccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // snowy_taiga
-    row(
-        32,
-        0x3e4ccccd,
-        0x3e4ccccd,
-        0x3e99999a,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // old_growth_pine_taiga
-    row(
-        33,
-        0x3ee66666,
-        0x3e99999a,
-        0x3e99999a,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // old_growth_pine_taiga
-    row(
-        34,
-        0x3f800000,
-        0x3f000000,
-        0x3e4ccccd,
-        0x3e99999a,
-        (2, 0),
-        (3, 0),
-        ExtremeHills,
-    ), // windswept_forest
-    row(
-        35,
-        0x3e000000,
-        0x3d4ccccd,
-        0x3f99999a,
-        0x00000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // savanna
-    row(
-        36,
-        0x3fc00000,
-        0x3ccccccd,
-        0x3f800000,
-        0x00000000,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // savanna_plateau
-    row(
-        37,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // badlands
-    row(
-        38,
-        0x3fc00000,
-        0x3ccccccd,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // wooded_badlands
-    row(
-        39,
-        0x3fc00000,
-        0x3ccccccd,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // badlands
-    row(
-        129,
-        0x3e000000,
-        0x3d4ccccd,
-        0x3f4ccccd,
-        0x3ecccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // sunflower_plains
-    row(
-        130,
-        0x3e666666,
-        0x3e800000,
-        0x40000000,
-        0x00000000,
-        (12, 0),
-        (12, 0),
-        Mutated,
-    ), // desert
-    row(
-        131,
-        0x3f800000,
-        0x3f000000,
-        0x3e4ccccd,
-        0x3e99999a,
-        (2, 0),
-        (3, 0),
-        ExtremeHills,
-    ), // windswept_gravelly_hills
-    row(
-        132,
-        0x3dcccccd,
-        0x3ecccccd,
-        0x3f333333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Plain,
-    ), // flower_forest
-    row(
-        133,
-        0x3e99999a,
-        0x3ecccccd,
-        0x3e800000,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // taiga
-    row(
-        134,
-        0xbdcccccd,
-        0x3e99999a,
-        0x3f4ccccd,
-        0x3f666666,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // swamp
-    row(
-        140,
-        0x3ed9999a,
-        0x3ee66667,
-        0x00000000,
-        0x3f000000,
-        (80, 0),
-        (3, 0),
-        Plain,
-    ), // ice_spikes
-    row(
-        149,
-        0x3e4ccccd,
-        0x3ecccccd,
-        0x3f733333,
-        0x3f666666,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // jungle
-    row(
-        151,
-        0x3e4ccccd,
-        0x3ecccccd,
-        0x3f733333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // sparse_jungle
-    row(
-        155,
-        0x3e4ccccd,
-        0x3ecccccd,
-        0x3f19999a,
-        0x3f19999a,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // old_growth_birch_forest
-    row(
-        156,
-        0x3f0ccccd,
-        0x3f000000,
-        0x3f19999a,
-        0x3f19999a,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // old_growth_birch_forest
-    row(
-        157,
-        0x3e4ccccd,
-        0x3ecccccd,
-        0x3f333333,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // dark_forest
-    row(
-        158,
-        0x3e99999a,
-        0x3ecccccd,
-        0xbf000000,
-        0x3ecccccd,
-        (2, 0),
-        (3, 0),
-        Mutated,
-    ), // snowy_taiga
-    row(
-        160,
-        0x3e4ccccd,
-        0x3e4ccccd,
-        0x3e800000,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // old_growth_spruce_taiga
-    row(
-        161,
-        0x3e4ccccd,
-        0x3e4ccccd,
-        0x3e800000,
-        0x3f4ccccd,
-        (2, 0),
-        (3, 0),
-        Taiga,
-    ), // old_growth_spruce_taiga
-    row(
-        162,
-        0x3f800000,
-        0x3f000000,
-        0x3e4ccccd,
-        0x3e99999a,
-        (2, 0),
-        (3, 0),
-        ExtremeHills,
-    ), // windswept_gravelly_hills
-    row(
-        163,
-        0x3eb9999a,
-        0x3f9ccccd,
-        0x3f8ccccd,
-        0x00000000,
-        (2, 0),
-        (3, 0),
-        ShatteredSavanna,
-    ), // windswept_savanna
-    row(
-        164,
-        0x3f866666,
-        0x3f9b3334,
-        0x3f800000,
-        0x00000000,
-        (2, 0),
-        (3, 0),
-        ShatteredSavanna,
-    ), // windswept_savanna
-    row(
-        165,
-        0x3dcccccd,
-        0x3e4ccccd,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // eroded_badlands
-    row(
-        166,
-        0x3ee66666,
-        0x3e99999a,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // wooded_badlands
-    row(
-        167,
-        0x3ee66666,
-        0x3e99999a,
-        0x40000000,
-        0x00000000,
-        (12, 1),
-        (159, 0),
-        Mesa,
-    ), // badlands
+    row(  0, 0xbf800000, 0x3dcccccd, 0x3f000000, 0x3f000000, (2, 0), (3, 0), Ocean, 0), // ocean
+    row(  1, 0x3e000000, 0x3d4ccccd, 0x3f4ccccd, 0x3ecccccd, (2, 0), (3, 0), Plain, 0), // plains
+    row(  2, 0x3e000000, 0x3d4ccccd, 0x40000000, 0x00000000, (12, 0), (12, 0), Plain, 0), // desert
+    row(  3, 0x3f800000, 0x3f000000, 0x3e4ccccd, 0x3e99999a, (2, 0), (3, 0), ExtremeHills, 0), // windswept_hills
+    row(  4, 0x3dcccccd, 0x3e4ccccd, 0x3f333333, 0x3f4ccccd, (2, 0), (3, 0), Plain, 0), // forest
+    row(  5, 0x3e4ccccd, 0x3e4ccccd, 0x3e800000, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 0), // taiga
+    row(  6, 0xbe4ccccd, 0x3dcccccd, 0x3f4ccccd, 0x3f666666, (2, 0), (3, 0), Swamp, 0), // swamp
+    row(  7, 0xbf000000, 0x00000000, 0x3f000000, 0x3f000000, (2, 0), (3, 0), Plain, 0), // river
+    row(  8, 0x3dcccccd, 0x3e4ccccd, 0x40000000, 0x00000000, (2, 0), (3, 0), Plain, 0), // nether_wastes
+    row(  9, 0x3dcccccd, 0x3e4ccccd, 0x3f000000, 0x3f000000, (3, 0), (3, 0), Plain, 0), // the_end
+    row( 10, 0xbf800000, 0x3dcccccd, 0x00000000, 0x3f000000, (2, 0), (3, 0), Ocean, 0), // frozen_ocean
+    row( 11, 0xbf000000, 0x00000000, 0x00000000, 0x3f000000, (2, 0), (3, 0), Plain, 0), // frozen_river
+    row( 12, 0x3e000000, 0x3d4ccccd, 0x00000000, 0x3f000000, (2, 0), (3, 0), Plain, 0), // snowy_plains
+    row( 13, 0x3ee66666, 0x3e99999a, 0x00000000, 0x3f000000, (2, 0), (3, 0), Plain, 0), // snowy_plains
+    row( 14, 0x3e4ccccd, 0x3e99999a, 0x3f666666, 0x3f800000, (110, 0), (3, 0), Plain, 0), // mushroom_fields
+    row( 15, 0x00000000, 0x3ccccccd, 0x3f666666, 0x3f800000, (110, 0), (3, 0), Plain, 0), // mushroom_fields
+    row( 16, 0x00000000, 0x3ccccccd, 0x3f4ccccd, 0x3ecccccd, (12, 0), (12, 0), Plain, 0), // beach
+    row( 17, 0x3ee66666, 0x3e99999a, 0x40000000, 0x00000000, (12, 0), (12, 0), Plain, 0), // desert
+    row( 18, 0x3ee66666, 0x3e99999a, 0x3f333333, 0x3f4ccccd, (2, 0), (3, 0), Plain, 0), // forest
+    row( 19, 0x3ee66666, 0x3e99999a, 0x3e800000, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 0), // taiga
+    row( 20, 0x3f4ccccd, 0x3e99999a, 0x3e4ccccd, 0x3e99999a, (2, 0), (3, 0), ExtremeHills, 1), // windswept_hills
+    row( 21, 0x3dcccccd, 0x3e4ccccd, 0x3f733333, 0x3f666666, (2, 0), (3, 0), Plain, 0), // jungle
+    row( 22, 0x3ee66666, 0x3e99999a, 0x3f733333, 0x3f666666, (2, 0), (3, 0), Plain, 0), // jungle
+    row( 23, 0x3dcccccd, 0x3e4ccccd, 0x3f733333, 0x3f4ccccd, (2, 0), (3, 0), Plain, 0), // sparse_jungle
+    row( 24, 0xbfe66666, 0x3dcccccd, 0x3f000000, 0x3f000000, (2, 0), (3, 0), Ocean, 0), // deep_ocean
+    row( 25, 0x3dcccccd, 0x3f4ccccd, 0x3e4ccccd, 0x3e99999a, (1, 0), (1, 0), Plain, 0), // stony_shore
+    row( 26, 0x00000000, 0x3ccccccd, 0x3d4ccccd, 0x3e99999a, (12, 0), (12, 0), Plain, 0), // snowy_beach
+    row( 27, 0x3dcccccd, 0x3e4ccccd, 0x3f19999a, 0x3f19999a, (2, 0), (3, 0), Plain, 0), // birch_forest
+    row( 28, 0x3ee66666, 0x3e99999a, 0x3f19999a, 0x3f19999a, (2, 0), (3, 0), Plain, 0), // birch_forest
+    row( 29, 0x3dcccccd, 0x3e4ccccd, 0x3f333333, 0x3f4ccccd, (2, 0), (3, 0), Plain, 0), // dark_forest
+    row( 30, 0x3e4ccccd, 0x3e4ccccd, 0xbf000000, 0x3ecccccd, (2, 0), (3, 0), Taiga, 0), // snowy_taiga
+    row( 31, 0x3ee66666, 0x3e99999a, 0xbf000000, 0x3ecccccd, (2, 0), (3, 0), Taiga, 0), // snowy_taiga
+    row( 32, 0x3e4ccccd, 0x3e4ccccd, 0x3e99999a, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 1), // old_growth_pine_taiga
+    row( 33, 0x3ee66666, 0x3e99999a, 0x3e99999a, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 1), // old_growth_pine_taiga
+    row( 34, 0x3f800000, 0x3f000000, 0x3e4ccccd, 0x3e99999a, (2, 0), (3, 0), ExtremeHills, 1), // windswept_forest
+    row( 35, 0x3e000000, 0x3d4ccccd, 0x3f99999a, 0x00000000, (2, 0), (3, 0), Plain, 0), // savanna
+    row( 36, 0x3fc00000, 0x3ccccccd, 0x3f800000, 0x00000000, (2, 0), (3, 0), Plain, 0), // savanna_plateau
+    row( 37, 0x3dcccccd, 0x3e4ccccd, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 0), // badlands
+    row( 38, 0x3fc00000, 0x3ccccccd, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 2), // wooded_badlands
+    row( 39, 0x3fc00000, 0x3ccccccd, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 0), // badlands
+    row(129, 0x3e000000, 0x3d4ccccd, 0x3f4ccccd, 0x3ecccccd, (2, 0), (3, 0), Plain, 0), // sunflower_plains
+    row(130, 0x3e666666, 0x3e800000, 0x40000000, 0x00000000, (12, 0), (12, 0), Mutated, 0), // desert
+    row(131, 0x3f800000, 0x3f000000, 0x3e4ccccd, 0x3e99999a, (2, 0), (3, 0), ExtremeHills, 2), // windswept_gravelly_hills
+    row(132, 0x3dcccccd, 0x3ecccccd, 0x3f333333, 0x3f4ccccd, (2, 0), (3, 0), Plain, 0), // flower_forest
+    row(133, 0x3e99999a, 0x3ecccccd, 0x3e800000, 0x3f4ccccd, (2, 0), (3, 0), Mutated, 0), // taiga
+    row(134, 0xbdcccccd, 0x3e99999a, 0x3f4ccccd, 0x3f666666, (2, 0), (3, 0), Mutated, 0), // swamp
+    row(140, 0x3ed9999a, 0x3ee66667, 0x00000000, 0x3f000000, (80, 0), (3, 0), Plain, 0), // ice_spikes
+    row(149, 0x3e4ccccd, 0x3ecccccd, 0x3f733333, 0x3f666666, (2, 0), (3, 0), Mutated, 0), // jungle
+    row(151, 0x3e4ccccd, 0x3ecccccd, 0x3f733333, 0x3f4ccccd, (2, 0), (3, 0), Mutated, 0), // sparse_jungle
+    row(155, 0x3e4ccccd, 0x3ecccccd, 0x3f19999a, 0x3f19999a, (2, 0), (3, 0), Mutated, 0), // old_growth_birch_forest
+    row(156, 0x3f0ccccd, 0x3f000000, 0x3f19999a, 0x3f19999a, (2, 0), (3, 0), Mutated, 0), // old_growth_birch_forest
+    row(157, 0x3e4ccccd, 0x3ecccccd, 0x3f333333, 0x3f4ccccd, (2, 0), (3, 0), Mutated, 0), // dark_forest
+    row(158, 0x3e99999a, 0x3ecccccd, 0xbf000000, 0x3ecccccd, (2, 0), (3, 0), Mutated, 0), // snowy_taiga
+    row(160, 0x3e4ccccd, 0x3e4ccccd, 0x3e800000, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 2), // old_growth_spruce_taiga
+    row(161, 0x3e4ccccd, 0x3e4ccccd, 0x3e800000, 0x3f4ccccd, (2, 0), (3, 0), Taiga, 2), // old_growth_spruce_taiga
+    row(162, 0x3f800000, 0x3f000000, 0x3e4ccccd, 0x3e99999a, (2, 0), (3, 0), ExtremeHills, 2), // windswept_gravelly_hills
+    row(163, 0x3eb9999a, 0x3f9ccccd, 0x3f8ccccd, 0x00000000, (2, 0), (3, 0), ShatteredSavanna, 0), // windswept_savanna
+    row(164, 0x3f866666, 0x3f9b3334, 0x3f800000, 0x00000000, (2, 0), (3, 0), ShatteredSavanna, 0), // windswept_savanna
+    row(165, 0x3dcccccd, 0x3e4ccccd, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 1), // eroded_badlands
+    row(166, 0x3ee66666, 0x3e99999a, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 2), // wooded_badlands
+    row(167, 0x3ee66666, 0x3e99999a, 0x40000000, 0x00000000, (12, 1), (159, 0), Mesa, 0), // badlands
 ];
 
 /// The 1.8.9 terrain fields of biome `id`, or `None` for an id 1.8.9 never
@@ -728,6 +188,7 @@ pub const PLAINS: BiomeTerrain18 = BiomeTerrain18 {
     top: (2, 0),
     filler: (3, 0),
     surface: Surface18::Plain,
+    variant: 0,
 };
 
 #[cfg(test)]
@@ -743,6 +204,7 @@ mod tests {
         top: LegacyBlock18,
         filler: LegacyBlock18,
         surface: Surface18,
+        variant: u8,
     }
 
     fn oracle() -> Vec<Row> {
@@ -784,6 +246,7 @@ mod tests {
                     "TaigaBiome" => Surface18::Taiga,
                     other => panic!("unexpected surface override {other}"),
                 },
+                variant: fields["variant"].parse().expect("variant"),
             });
         }
         rows
@@ -821,6 +284,7 @@ mod tests {
             assert_eq!(terrain.top, row.top, "{} top block", row.id);
             assert_eq!(terrain.filler, row.filler, "{} filler block", row.id);
             assert_eq!(terrain.surface, row.surface, "{} surface override", row.id);
+            assert_eq!(terrain.variant, row.variant, "{} variant", row.id);
         }
         assert_eq!(
             terrain(1),
