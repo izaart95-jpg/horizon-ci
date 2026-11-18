@@ -29,6 +29,7 @@ use std::sync::OnceLock;
 
 use horizon_core::random::{LegacyRandom, RandomSource};
 
+use super::carver_1_8_9::Carver18;
 use super::noise_1_8_9::{PerlinNoise18, TerrainNoise18};
 use super::terrain_1_8_9::{self, CHUNK_VOLUME, DensityBlock18, TerrainDensity18};
 use crate::biome_terrain_1_8_9::{self, BiomeTerrain18, LegacyBlock18, PLAINS, Surface18};
@@ -267,6 +268,8 @@ impl SurfaceState18 {
 pub struct ChunkGenerator18 {
     density: TerrainDensity18,
     surface: SurfaceState18,
+    /// `CaveCarver` and `RavineCarver`, in `getChunk`'s order.
+    carvers: Carver18,
     /// `LevelGeneratorType.AMPLIFIED`: doubled positive biome depth and
     /// quadrupled variation in the density blend.
     amplified: bool,
@@ -277,13 +280,13 @@ impl ChunkGenerator18 {
         Self {
             density: TerrainDensity18::new(seed),
             surface: SurfaceState18::new(),
+            carvers: Carver18::new(),
             amplified,
         }
     }
 
     /// A chunk's block states in `ChunkBlockStateStorage` order (`x << 12 |
-    /// z << 8 | y`, `id << 4 | meta`), with no carvers, features or
-    /// structures.
+    /// z << 8 | y`, `id << 4 | meta`), with no features or structures.
     ///
     /// `river_biomes` is `method_3857`'s 10x10 density neighbourhood and
     /// `voronoi_biomes` the 16x16 Voronoi array the surface pass and the
@@ -318,6 +321,9 @@ impl ChunkGenerator18 {
             sea_level,
             &mut storage,
         );
+        let biomes: [u8; 256] = voronoi_biomes.try_into().expect("16x16 Voronoi biomes");
+        self.carvers
+            .carve(world_seed, chunk_x, chunk_z, &biomes, &mut storage);
         storage
     }
 }

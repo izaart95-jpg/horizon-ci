@@ -23,6 +23,31 @@ pub fn cos(angle: f64) -> f32 {
     sine_table()[((angle * SCALE + 16384.0) as i64 & 65535) as usize]
 }
 
+static SINE_1_8_9: OnceLock<Box<[f32]>> = OnceLock::new();
+
+/// 1.8.9's `MathHelper.SINE_TABLE`: the same 65,536-point sine as
+/// [`sine_table`], built with 1.8's exact `Math.sin(i * PI * 2 / 65536)`
+/// expression.
+pub fn sine_table_1_8_9() -> &'static [f32] {
+    SINE_1_8_9.get_or_init(|| {
+        (0..65536)
+            .map(|i| ((i as f64) * std::f64::consts::PI * 2.0 / 65536.0).sin() as f32)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    })
+}
+
+/// 1.8.9's `MathHelper.sin`: the table indexed through the 1.8 float stride
+/// (`10430.378f`), with Java's `(int)` truncation.
+pub fn sin_1_8_9(angle: f32) -> f32 {
+    sine_table_1_8_9()[((angle * 10430.378f32) as i32 & 0xFFFF) as usize]
+}
+
+/// 1.8.9's `MathHelper.cos`: [`sin_1_8_9`] offset by a quarter turn.
+pub fn cos_1_8_9(angle: f32) -> f32 {
+    sine_table_1_8_9()[((angle * 10430.378f32 + 16384.0f32) as i32 & 0xFFFF) as usize]
+}
+
 /// `Mth.atan2`: vanilla's table-driven arctangent.
 pub fn atan2(mut y: f64, mut x: f64) -> f64 {
     static TABLES: OnceLock<(Vec<f64>, Vec<f64>)> = OnceLock::new();
